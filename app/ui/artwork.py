@@ -235,7 +235,7 @@ class ArtworkStore(QObject):
         path = QPainterPath()
         path.addRoundedRect(0, 0, output.width(), output.height(), 12, 12)
         painter.setClipPath(path)
-        painter.fillRect(output.rect(), QColor("#24272b"))
+        painter.fillRect(output.rect(), QColor("#303640"))
         if pixmap is not None:
             target = output.size() - QSize(12, 12) if contain else output.size()
             scaled = pixmap.scaled(target, Qt.AspectRatioMode.KeepAspectRatio if contain

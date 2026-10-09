@@ -82,7 +82,7 @@ class MfaPromptDialog(QDialog):
         lay.addWidget(lbl_who)
 
         self.lbl_location = QLabel("Location: locating…")
-        self.lbl_location.setStyleSheet("color:#8888aa;")
+        self.lbl_location.setStyleSheet("color:#adb3c2;")
         self.lbl_location.setOpenExternalLinks(True)
         self.lbl_location.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextBrowserInteraction
@@ -90,11 +90,11 @@ class MfaPromptDialog(QDialog):
         lay.addWidget(self.lbl_location)
 
         lbl_time = QLabel(f"Time: {_format_time(push.get('attempted_at'))}")
-        lbl_time.setStyleSheet("color:#666677; font-size:11px;")
+        lbl_time.setStyleSheet("color:#929ba9; font-size:11px;")
         lay.addWidget(lbl_time)
 
         self.lbl_status = QLabel("")
-        self.lbl_status.setStyleSheet("color:#aaaa55; font-size:11px;")
+        self.lbl_status.setStyleSheet("color:#d5c58b; font-size:11px;")
         self.lbl_status.hide()
         lay.addWidget(self.lbl_status)
 

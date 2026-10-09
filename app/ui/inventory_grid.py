@@ -1,7 +1,7 @@
 """Responsive, virtualized collection tiles using the existing public artwork cache."""
 
 from PyQt6.QtCore import QSize, QRectF, QPointF, Qt
-from PyQt6.QtGui import QColor, QFont, QPen, QTextLayout, QTextOption
+from PyQt6.QtGui import QColor, QFont, QPen, QTextLayout, QTextOption, QPainterPath
 from PyQt6.QtWidgets import QListWidget, QStyledItemDelegate, QStyle, QAbstractItemView
 
 
@@ -76,14 +76,19 @@ class InventoryDelegate(QStyledItemDelegate):
         painter.save()
         painter.setRenderHint(painter.RenderHint.Antialiasing)
         painter.setRenderHint(painter.RenderHint.TextAntialiasing)
-        painter.setBrush(QColor("#292327" if selected else "#24272c" if hovered else "#1c1f22"))
-        painter.setPen(QPen(QColor("#b8767e" if selected else "#515861" if hovered else "#30353a"), 1))
-        painter.drawRoundedRect(rect.adjusted(.5, .5, -.5, -.5), 12, 12)
+        painter.setBrush(QColor("#353039" if selected else "#2e333b" if hovered else "#252a31"))
+        painter.setPen(QPen(QColor("#886a79" if selected else "#454c57" if hovered else "#343b44"), 1))
+        painter.drawRoundedRect(rect.adjusted(.5, .5, -.5, -.5), 16, 16)
         is_skin = meta.get("collection") == "skins"
         image_rect = self.artwork_rect(rect, compact, is_skin)
         pixmap = self.store.thumbnail(meta.get("game", "lol"), meta.get("collection", "characters"),
                                       row, QSize(max(1, int(image_rect.width())), max(1, int(image_rect.height()))))
+        painter.save()
+        clip = QPainterPath()
+        clip.addRoundedRect(image_rect, 9, 9)
+        painter.setClipPath(clip)
         painter.drawPixmap(image_rect.topLeft(), pixmap)
+        painter.restore()
 
         font = QFont(option.font)
         font.setPixelSize(12 if compact else 13)
@@ -113,14 +118,14 @@ class InventoryDelegate(QStyledItemDelegate):
             label = painter.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, int(type_rect.width()) - 10)
             pill = QRectF(type_rect.left(), type_rect.top(), min(type_rect.width(), painter.fontMetrics().horizontalAdvance(label) + 10), 16)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor("#292c31"))
-            painter.drawRoundedRect(pill, 4, 4)
+            painter.setBrush(QColor("#303640"))
+            painter.drawRoundedRect(pill, 8, 8)
             painter.setPen(QColor(colors.get(str(row.get("skin_type")), "#a0a7af")))
             painter.drawText(pill.adjusted(5, 0, -5, 0), Qt.AlignmentFlag.AlignVCenter, label)
         if option.state & QStyle.StateFlag.State_HasFocus:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor("#d4a0a6"), 1))
-            painter.drawRoundedRect(rect.adjusted(2.5, 2.5, -2.5, -2.5), 10, 10)
+            painter.drawRoundedRect(rect.adjusted(2.5, 2.5, -2.5, -2.5), 14, 14)
         painter.restore()
 
     @staticmethod

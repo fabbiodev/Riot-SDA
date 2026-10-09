@@ -55,6 +55,9 @@ from app.core.search import account_key
 from app.core.sessions import SessionManager
 from app.core.session_store import MemorySessionStore
 from app.core.client_sessions import ClientSessionManager
+from app.core.account_details import AccountDetailsManager, MemoryDetailsStore
+from app.api.account_details import extract_details, AccountDetailsError
+from app.ui.account_details_dialog import AccountDetailsDialog
 from app.api.developer_api import DeveloperApi, DataError
 from app.api.game_clients import fetch_collection
 from app.api.rankings import merge_rankings, rank_region
@@ -122,6 +125,10 @@ class MainWindow(QMainWindow):
         self.client_sessions.launched.connect(lambda key: self.toast.popup("Riot Client открыт с выбранным аккаунтом"))
         QApplication.instance().aboutToQuit.connect(self.client_sessions.stop)
 
+        self.account_details = AccountDetailsManager(self.sessions, self, enabled=start_services,
+                                                     store=None if start_services else MemoryDetailsStore())
+        QApplication.instance().aboutToQuit.connect(self.account_details.stop)
+
         self._populate()
         if start_services:
             QTimer.singleShot(0, self.sessions.poll)
@@ -183,6 +190,10 @@ class MainWindow(QMainWindow):
                 self._add_via_login(connect_2fa=True, target=copy.deepcopy(account))
         elif action == "client-launch":
             self.client_sessions.launch(account)
+        elif action == "account-details":
+            dialog = AccountDetailsDialog(account, self.account_details, self)
+            self.account_details.refresh(account)
+            dialog.exec()
         elif action == "client-login":
             self._add_via_login(target=copy.deepcopy(account), refresh_session=True)
         elif action == "session-refresh":
@@ -547,6 +558,7 @@ class MainWindow(QMainWindow):
         self._update_session_status()
         self.dashboard.set_accounts(self.accounts)
         self.client_sessions.set_accounts(self.accounts)
+        self.account_details.set_accounts(self.accounts)
         self._update_client_status()
 
     def _update_client_status(self):
@@ -703,11 +715,16 @@ class MainWindow(QMainWindow):
 
         puuid = None
         username = None
+        personal_details = {}
         try:
             user = fetch_account_user(cookies, csrf)
             name = riot_id_from_user(user) or "Unknown"
             puuid = puuid_from_user(user)
             username = user.get("username")
+            try:
+                personal_details = extract_details(puuid, user=user) if puuid else {}
+            except AccountDetailsError:
+                pass  # Optional metadata must not break otherwise valid enrollment.
         except Exception:
             name = "Unknown"
         if target and not self._login_owner_matches(target, puuid, name):
@@ -723,6 +740,7 @@ class MainWindow(QMainWindow):
                 self._login_result.emit({"kind": "success", "mode": "qr" if qr_request else "session", "target_key": account_key(target),
                                          "puuid": puuid, "name": name, "qr_session": data.get("sso") or {},
                                          "cookie_expires_at": data.get("cookie_expires_at"),
+                                         "personal_details": personal_details,
                                          "qr_request": qr_request})
                 return
             # Profile metadata stays separate from the protected QR session.
@@ -730,6 +748,7 @@ class MainWindow(QMainWindow):
             if isinstance(username, str) and username:
                 account["login"] = username
             self._login_result.emit({"kind": "success", "mode": "profile", "account": account, "name": name,
+                                     "personal_details": personal_details,
                                      "cookie_expires_at": data.get("cookie_expires_at"),
                                      "qr_session": data.get("sso") or {}})
             return
@@ -786,6 +805,7 @@ class MainWindow(QMainWindow):
         self._login_result.emit({
             "kind": "success",
             "mode": "2fa",
+            "personal_details": personal_details,
             "target_key": account_key(target) if target else None,
             "account": account,
             "name": name,
@@ -825,6 +845,7 @@ class MainWindow(QMainWindow):
                 self.dashboard.selected_key = account_key(account)
                 self._save_and_refresh()
             self.sessions.put(account, result["qr_session"], result.get("cookie_expires_at"))
+            self.account_details.put_login(account, result.get("personal_details", {}))
             if self._rank_auto_enabled:
                 self._queue_rank_refresh([account])
             if result.get("qr_request"):
@@ -854,6 +875,7 @@ class MainWindow(QMainWindow):
             account = incoming
             self.accounts.append(account)
         self.dashboard.selected_key = account_key(account)
+        self.account_details.put_login(account, result.get("personal_details", {}))
         if mode == "profile" and result.get("qr_session"):
             self.sessions.put(account, result["qr_session"], result.get("cookie_expires_at"))
         elif mode == "2fa" and account.get("sso"):

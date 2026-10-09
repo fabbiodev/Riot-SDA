@@ -58,8 +58,8 @@ class QrScannerDialog(QDialog):
         self.bar.setObjectName("qrBar")
         self.bar.setFixedHeight(30)
         self.bar.setStyleSheet(
-            "#qrBar{background:#16161e; border:1px solid #3a6a8a;"
-            "border-top-left-radius:8px; border-top-right-radius:8px;}"
+            "#qrBar{background:#252a32; border:1px solid #64788b;"
+            "border-top-left-radius:12px; border-top-right-radius:12px;}"
         )
         bar_l = QHBoxLayout(self.bar)
         bar_l.setContentsMargins(10, 0, 6, 0)
@@ -72,9 +72,9 @@ class QrScannerDialog(QDialog):
         close.setToolTip("Close (Esc)")
         close.setCursor(Qt.CursorShape.PointingHandCursor)
         close.setStyleSheet(
-            "QPushButton{background:#2a1414; border:1px solid #5a2a2a; border-radius:5px;"
-            "color:#e08585; font-size:14px; font-weight:bold;}"
-            "QPushButton:hover{background:#a02424; color:#ffffff; border-color:#c04040;}"
+            "QPushButton{background:#35303a; border:1px solid #725b6b; border-radius:9px;"
+            "color:#e7bdc8; font-size:14px;}"
+            "QPushButton:hover{background:#51404c; color:#f3e9ed; border-color:#947488;}"
         )
         close.clicked.connect(self.reject)
         bar_l.addWidget(close)
@@ -83,7 +83,7 @@ class QrScannerDialog(QDialog):
         self.viewport = QFrame()
         self.viewport.setObjectName("qrViewport")
         self.viewport.setStyleSheet(
-            "#qrViewport{background:transparent; border:2px solid #5aa0c0;"
+            "#qrViewport{background:transparent; border:2px solid #8cabbc;"
             "border-top:none;}"
         )
         root.addWidget(self.viewport, stretch=1)

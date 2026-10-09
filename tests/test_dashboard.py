@@ -241,8 +241,8 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(self.widget._content_fade.effect.opacity(), 1.0)
 
     def test_tab_hover_stays_inside_selected_button(self):
-        for button, border in [(self.widget.game_buttons["valorant"], "#69414a"),
-                               (self.widget.collection_buttons["skins"], "#373b40")]:
+        for button, border in [(self.widget.game_buttons["valorant"], "#725b6b"),
+                               (self.widget.collection_buttons["skins"], "#3c4450")]:
             button.setChecked(True)
             button._hover_animation.stop()
             button.hoverAmount = 1.0

@@ -30,7 +30,7 @@ def rank_pixmap(queue, tier, status, size):
     else:
         # A neutral shield must never look like an earned rank.
         painter.setPen(QColor("#69717c"))
-        painter.setBrush(QColor("#24272b"))
+        painter.setBrush(QColor("#303640"))
         shield = QPainterPath()
         shield.moveTo(size * .5, size * .3)
         shield.lineTo(size * 1.5, size * .3)
@@ -70,12 +70,12 @@ class AccountDelegate(QStyledItemDelegate):
         font = QFont(option.font)
         font.setPixelSize(13)
         painter.setFont(font)
-        painter.setPen(QColor("#e0e3e6"))
+        painter.setPen(QColor("#e3e5e9"))
         painter.drawText(QRect(left, top, name_width, 19), Qt.AlignmentFlag.AlignVCenter,
                          painter.fontMetrics().elidedText(card.get("name", "Аккаунт"), Qt.TextElideMode.ElideRight, name_width))
         font.setPixelSize(11)
         painter.setFont(font)
-        painter.setPen(QColor("#99a0a8"))
+        painter.setPen(QColor("#a4acb8"))
         painter.drawText(QRect(left, top + 21, name_width, 17), Qt.AlignmentFlag.AlignVCenter,
                          painter.fontMetrics().elidedText(card.get("subtitle", ""), Qt.TextElideMode.ElideRight, name_width))
         if ranks:
@@ -85,10 +85,10 @@ class AccountDelegate(QStyledItemDelegate):
             for i, (queue, caption) in enumerate((("solo", "Solo"), ("flex", "Flex"), ("tft", "TFT"))):
                 rank = ranks.get(queue, {})
                 y = option.rect.y() + 9 + i * 19
-                painter.setPen(QColor("#99a0a8"))
+                painter.setPen(QColor("#a4acb8"))
                 painter.drawText(QRect(rank_left, y, 25, 18), Qt.AlignmentFlag.AlignVCenter, caption)
                 painter.drawPixmap(rank_left + 28, y, rank_pixmap(queue, rank.get("tier"), rank.get("status"), 18))
-                painter.setPen(QColor("#e0e3e6") if rank.get("status") == "ranked" else QColor("#99a0a8"))
+                painter.setPen(QColor("#e3e5e9") if rank.get("status") == "ranked" else QColor("#a4acb8"))
                 text = (rank.get("division", "") if rank.get("status") == "ranked"
                         else "—" if rank.get("status") == "unranked" else "?")
                 if rank.get("refresh_error"):

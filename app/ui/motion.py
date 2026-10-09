@@ -10,7 +10,7 @@ class AnimatedButton(QPushButton):
         super().__init__(*args, **kwargs)
         self._hover = 0.0
         self._hover_animation = QPropertyAnimation(self, b"hoverAmount", self)
-        self._hover_animation.setDuration(140)
+        self._hover_animation.setDuration(180)
         self._hover_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     @pyqtProperty(float)
@@ -42,8 +42,8 @@ class AnimatedButton(QPushButton):
             painter = QPainter(self)
             painter.setRenderHint(QPainter.RenderHint.Antialiasing)
             painter.setPen(Qt.PenStyle.NoPen)
-            painter.setBrush(QColor(255, 255, 255, round(16 * self._hover)))
-            painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 9, 9)
+            painter.setBrush(QColor(238, 231, 230, round(12 * self._hover)))
+            painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 13, 13)
 
 
 class ContentFade(QObject):
@@ -53,14 +53,14 @@ class ContentFade(QObject):
         self.effect.setOpacity(1.0)
         widget.setGraphicsEffect(self.effect)
         self.animation = QPropertyAnimation(self.effect, b"opacity", self)
-        self.animation.setDuration(190)
+        self.animation.setDuration(220)
         self.animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def start(self):
         if not self.parent().isVisible():
             return
         self.animation.stop()
-        self.animation.setStartValue(0.72)
+        self.animation.setStartValue(0.84)
         self.animation.setEndValue(1.0)
         self.animation.start()
 

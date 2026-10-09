@@ -151,7 +151,7 @@ class Dashboard(QWidget):
 
         self.detail = QWidget()
         main = QVBoxLayout(self.detail)
-        main.setContentsMargins(28, 16, 28, 12)
+        main.setContentsMargins(28, 14, 28, 10)
         main.setSpacing(8)
         profile_header = QHBoxLayout()
         identity = QVBoxLayout()
@@ -162,6 +162,18 @@ class Dashboard(QWidget):
         identity.addWidget(self.riot_id)
         self.login_label = plain_label("", "mutedLabel")
         identity.addWidget(self.login_label)
+        self.details_button = self._action_button("Об аккаунте", "account-details")
+        self.details_button.setObjectName("accountDetailsButton")
+        self.details_button.setFixedHeight(18)
+        self.details_button.setToolTip("Телефон, день рождения и сведения о регистрации")
+        # Share the existing login row: no extra dashboard height at 900×640.
+        identity.removeWidget(self.login_label)
+        login_row = QHBoxLayout()
+        login_row.setSpacing(10)
+        login_row.addWidget(self.login_label)
+        login_row.addWidget(self.details_button)
+        login_row.addStretch()
+        identity.addLayout(login_row)
         profile_header.addLayout(identity, 1)
         self.launch_button = self._action_button("Riot Client", "client-launch")
         self.launch_button.setToolTip("Запустить Riot Client с выбранным аккаунтом без QR")
@@ -173,6 +185,8 @@ class Dashboard(QWidget):
         self.menu_button.setObjectName("accountMenu")
         self.menu_button.setFixedWidth(36)
         menu = QMenu(self.menu_button)
+        menu.addAction("Об аккаунте…", lambda: self.action_requested.emit("account-details"))
+        menu.addSeparator()
         menu.addAction("Обновить вход для Riot Client…", lambda: self.action_requested.emit("client-login"))
         menu.addSeparator()
         self.session_refresh_action = menu.addAction("Обновить QR-сессию", lambda: self.action_requested.emit("session-refresh"))
@@ -473,7 +487,7 @@ class Dashboard(QWidget):
             ("чемпионам" if self.game == "lol" else "агентам") if self.collection == "characters"
             else "Скин, чемпион или оружие")
         for widget in (self.code_button, self.visibility_button, self.qr_button, self.menu_button,
-                       self.api_button, self.client_button):
+                       self.api_button, self.client_button, self.details_button):
             widget.setEnabled(account is not None)
         has_2fa = bool(account and account.get("seed"))
         self.code_button.setEnabled(has_2fa)

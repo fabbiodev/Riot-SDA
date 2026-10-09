@@ -51,3 +51,5 @@ RiotClientPrivateSettings.yaml
 # Downloaded reference archives; final app assets are tracked under app/assets.
 build/ranked-emblems-latest.zip
 build/tft-regalia.json
+# Personal account metadata is encrypted and never committed.
+account-details.dpapi

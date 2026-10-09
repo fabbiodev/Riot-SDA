@@ -26,6 +26,7 @@ class RankRefreshTests(unittest.TestCase):
         self.thread = patch("app.ui.main_window.threading.Thread").start()
         patch.object(MainWindow, "_refresh_skin_types").start()
         patch("app.ui.main_window.ClientSessionManager").start()
+        patch("app.ui.main_window.AccountDetailsManager").start()
         patch("app.ui.main_window.FcmService").start()
         patch("app.ui.main_window.save_accounts").start()
         self.win = MainWindow(accounts=accounts(), start_services=False)

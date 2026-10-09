@@ -42,7 +42,7 @@ class QrConfirmDialog(QDialog):
         lay.addWidget(who)
 
         self.lbl_location = QLabel("Location: locating…" if self._lat else "Location: unknown")
-        self.lbl_location.setStyleSheet("color:#8888aa;")
+        self.lbl_location.setStyleSheet("color:#adb3c2;")
         self.lbl_location.setOpenExternalLinks(True)
         self.lbl_location.setTextInteractionFlags(
             Qt.TextInteractionFlag.TextBrowserInteraction
@@ -55,7 +55,7 @@ class QrConfirmDialog(QDialog):
             except (TypeError, ValueError):
                 when = str(ts)
             t = QLabel(f"Time: {when}")
-            t.setStyleSheet("color:#666677; font-size:11px;")
+            t.setStyleSheet("color:#929ba9; font-size:11px;")
             lay.addWidget(t)
 
         lay.addSpacing(6)
