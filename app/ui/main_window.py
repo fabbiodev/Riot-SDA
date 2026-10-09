@@ -60,7 +60,7 @@ from app.api.account_details import extract_details, AccountDetailsError
 from app.ui.account_details_dialog import AccountDetailsDialog
 from app.api.developer_api import DeveloperApi, DataError
 from app.api.game_clients import fetch_collection
-from app.api.rankings import merge_rankings, rank_region
+from app.api.rankings import merge_rankings, rank_region, resolve_rank_region
 from app.api.opgg import fetch_auto_rankings
 from app.core.catalog import load_catalog, save_catalog, league_catalog
 from app.core.skin_types import fetch_skin_types
@@ -105,6 +105,7 @@ class MainWindow(QMainWindow):
         self._rank_auto_enabled = start_services
         self._rank_pending = set()
         self._rank_running = set()
+        self._rank_waiting_sessions = set()
         self._rank_not_before = 0
         self._rank_stopped = False
         self._game_data_result.connect(self._on_game_data_result)
@@ -254,7 +255,9 @@ class MainWindow(QMainWindow):
                          "valorant": dialog.val_key.text().strip()}
         if account:
             old_region = rank_region(account)
-            account["api_routes"] = {"lol": dialog.lol_region.currentText(),
+            manual = dialog.lol_region.currentIndex() > 0
+            account["api_routes"] = {"lol": dialog.lol_region.currentText() if manual else "",
+                                     "lol_manual": manual,
                                      "valorant": dialog.val_region.currentText()}
             if old_region != rank_region(account):
                 account.get("games", {}).get("lol", {}).pop("ranks", None)
@@ -280,9 +283,18 @@ class MainWindow(QMainWindow):
             return
         existing = {account_key(a) for a in self.accounts}
         self._rank_pending.intersection_update(existing)
+        self._rank_waiting_sessions.intersection_update(existing)
         for account in self.accounts:
             key = account_key(account)
             if key in self._rank_pending and (key, "lol") not in self._data_jobs:
+                record = self._profile_sessions.get(key, {})
+                if (not account.get("api_routes", {}).get("lol_manual") and not self.sessions.token(key)
+                        and record.get("sso", {}).get("ssid")
+                        and record.get("status") not in ("login", "forgotten")):
+                    if key not in self._rank_waiting_sessions:
+                        self._rank_waiting_sessions.add(key)
+                        self.sessions.request(key)
+                    continue
                 self._rank_pending.remove(key)
                 self._rank_running.add(key)
                 self._start_game_data(account, "lol", "ranks", rank_region(account))
@@ -291,6 +303,7 @@ class MainWindow(QMainWindow):
     def _stop_rank_refresh(self):
         self._rank_stopped = True
         self._rank_pending.clear()
+        self._rank_waiting_sessions.clear()
         self.rank_timer.stop()
         self.rank_queue_timer.stop()
 
@@ -347,15 +360,25 @@ class MainWindow(QMainWindow):
         key = account_key(account)
         self._data_jobs.add((key, game))
         self.dashboard.set_busy(key, game, True)
+        record = self._profile_sessions.get(key, {})
+        token = self.sessions.token(key) if (operation == "ranks" and account.get("puuid")
+                    and str(record.get("puuid") or "").casefold() == str(account["puuid"]).casefold()) else None
+        identity = {"token": token, "generation": record.get("generation")} if token else {}
         threading.Thread(target=self._game_data_worker,
-                         args=(key, copy.deepcopy(account), game, operation, region, self.api_keys[game], self.api_keys["tft"]),
+                         args=(key, copy.deepcopy(account), game, operation, region, self.api_keys[game], self.api_keys["tft"], identity),
                          daemon=True).start()
 
-    def _game_data_worker(self, key, account, game, operation, region, api_key, tft_key=""):
+    def _game_data_worker(self, key, account, game, operation, region, api_key, tft_key="", identity=None):
         result = {"key": key, "game": game, "operation": operation, "lookup_name": account.get("name"),
                   "lookup_region": region}
         try:
             if operation == "ranks":
+                identity = identity or {}
+                result["lookup_puuid"] = account.get("puuid")
+                if identity.get("token"):
+                    result["lookup_generation"] = identity.get("generation")
+                region = resolve_rank_region(account, identity.get("token"))
+                result["resolved_region"] = region
                 result["data"] = fetch_auto_rankings(account["name"], region, tft_key)
             elif operation == "collection":
                 result["data"] = fetch_collection(account, game)
@@ -385,6 +408,8 @@ class MainWindow(QMainWindow):
         # Schedule the next job after this result has been applied on the UI thread.
         QTimer.singleShot(0, self._drain_rank_queue)
         if (self._rank_stopped or account is None or account.get("name") != result["lookup_name"]
+                or ("lookup_puuid" in result and account.get("puuid") != result["lookup_puuid"])
+                or ("lookup_generation" in result and self._profile_sessions.get(key, {}).get("generation") != result["lookup_generation"])
                 or (result.get("operation") == "ranks" and result.get("lookup_region", rank_region(account)) != rank_region(account))):
             if account is not None and not self._rank_stopped and result.get("operation") == "ranks":
                 self._queue_rank_refresh([account])
@@ -397,6 +422,12 @@ class MainWindow(QMainWindow):
             save_catalog(game, result["data"])
         else:
             profile = account.setdefault("games", {}).setdefault(game, {})
+            if result.get("operation") == "ranks" and result.get("resolved_region"):
+                resolved = result["resolved_region"]
+                if rank_region(account) != resolved:
+                    profile.pop("ranks", None)
+                account["league_region"] = resolved
+                profile["region"] = resolved
             data = dict(result["data"])
             data.pop("rank_retry_after", None)
             if "ranks" in data:
@@ -1024,6 +1055,14 @@ class MainWindow(QMainWindow):
         self._confirm_qr_signin(account, token, suuid, cluster)
 
     def _on_session_ready(self, key, state):
+        if key in self._rank_waiting_sessions:
+            if self.sessions.token(key):
+                self._rank_waiting_sessions.discard(key)
+                QTimer.singleShot(0, self._drain_rank_queue)
+            elif state in ("login", "forgotten"):
+                self._rank_waiting_sessions.discard(key)
+                self._rank_pending.discard(key)
+                self.dashboard.set_error(key, "lol", "Выберите сервер League в настройках API или повторите вход в Riot SDA.")
         pending = self._pending_qr.pop(key, None)
         if pending is None:
             return

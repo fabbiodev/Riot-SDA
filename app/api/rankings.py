@@ -3,6 +3,8 @@
 import time
 from urllib.parse import quote
 
+import requests
+
 from app.api.developer_api import DeveloperApi, DataError, LOL_PLATFORMS
 
 QUEUES = {"solo": "RANKED_SOLO_5x5", "flex": "RANKED_FLEX_SR", "tft": "RANKED_TFT"}
@@ -16,8 +18,59 @@ TOP_TIERS = {"MASTER", "GRANDMASTER", "CHALLENGER"}
 
 
 def rank_region(account):
-    region = account.get("api_routes", {}).get("lol") or account.get("games", {}).get("lol", {}).get("region")
-    return region if region in LOL_PLATFORMS else "RU"
+    routes = account.get("api_routes", {})
+    candidates = [routes.get("lol")] if routes.get("lol_manual") else [
+        account.get("league_region"), routes.get("lol"), account.get("games", {}).get("lol", {}).get("region")]
+    return next((region for value in candidates if (region := normalize_platform(value))), "")
+
+
+def normalize_platform(value):
+    if not isinstance(value, str):
+        return ""
+    value = value.strip().upper()
+    for region, (platform, _) in LOL_PLATFORMS.items():
+        if value in (region, platform.upper()):
+            return region
+    return ""
+
+
+def region_from_userinfo(account, data):
+    owner = str(account.get("puuid") or "").casefold()
+    if not owner or not isinstance(data, dict) or str(data.get("sub") or "").casefold() != owner:
+        raise DataError("Riot вернул регион другого аккаунта. Войдите заново в Riot SDA.")
+    lol = data.get("lol")
+    if isinstance(lol, dict) and lol.get("active") is not False:
+        region = normalize_platform(lol.get("cpid"))
+        if region:
+            return region
+    entries = data.get("lol_region")
+    regions = {normalize_platform(item.get("cpid")) for item in entries
+               if isinstance(item, dict) and item.get("active") is True} if isinstance(entries, list) else set()
+    regions.discard("")
+    if len(regions) == 1:
+        return regions.pop()
+    raise DataError("Riot не предоставил сервер League. Выберите его в настройках API.")
+
+
+def resolve_rank_region(account, token=None):
+    """Resolve the account's League platform without contacting a local game client."""
+    cached = rank_region(account)
+    if account.get("api_routes", {}).get("lol_manual") and cached:
+        return cached
+    if token:
+        try:
+            with requests.Session() as session:
+                session.trust_env = False
+                response = session.get("https://auth.riotgames.com/userinfo",
+                                       headers={"Authorization": "Bearer " + token},
+                                       timeout=(5, 15), allow_redirects=False)
+                if response.status_code == 200:
+                    return region_from_userinfo(account, response.json())
+        except (requests.RequestException, ValueError):
+            pass
+    if cached:
+        return cached
+    raise DataError("Не удалось определить сервер League. Войдите в Riot SDA или выберите сервер в настройках API.")
 
 
 def normalize_entries(entries, queues, region, updated_at):

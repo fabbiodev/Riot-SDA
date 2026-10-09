@@ -221,7 +221,7 @@ class DashboardTests(unittest.TestCase):
             win._refresh_game_data("ranks")
             arguments = thread.call_args.kwargs["args"]
             self.assertEqual(arguments[3], "ranks")
-            self.assertEqual(arguments[-2:], ("league-key", "tft-key"))
+            self.assertEqual(arguments[5:7], ("league-key", "tft-key"))
             self.assertIsNot(arguments[1], win.accounts[0])
             self.assertFalse(win.dashboard.ranks_button.isEnabled())
             thread.return_value.start.assert_called_once()

@@ -9,7 +9,7 @@
 Приложение для Windows с поддержкой League of Legends и VALORANT.
 
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-24272b?style=flat-square)](#getting-started)
-[![Version](https://img.shields.io/badge/source-1.0.1-e88992?style=flat-square)](app/version.py)
+[![Version](https://img.shields.io/badge/source-1.1.0-e88992?style=flat-square)](app/version.py)
 [![Python](https://img.shields.io/badge/Python-3.11-3776ab?style=flat-square&logo=python&logoColor=white)](requirements.txt)
 [![PyQt6](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square)](app/ui)
 [![License: MIT](https://img.shields.io/badge/license-MIT-24272b?style=flat-square)](LICENSE)
@@ -69,7 +69,7 @@
 
 ## Установка
 
-Скачайте [Riot SDA 1.0 для Windows](https://github.com/fabbiodev/Riot-SDA/releases/tag/v1.0.0).
+Скачайте [Riot SDA 1.1 для Windows](https://github.com/fabbiodev/Riot-SDA/releases/tag/v1.1.0).
 `Riot2FA-Setup.exe` устанавливает приложение и создаёт ярлыки.
 `Riot2FA.exe` — отдельная переносимая сборка.
 
@@ -92,7 +92,7 @@ python -m venv .venv
 ### Первое использование
 
 1. Нажмите **«Добавить»** и добавьте свой аккаунт.
-2. Откройте **«Настройки API»**, проверьте сервер и полный Riot ID в формате `ник#тег`.
+2. Для рангов OP.GG достаточно полного Riot ID в формате `ник#тег`: сервер определяется через сохранённый вход Riot без запуска игры. Если требуется другой сервер, выберите его в **«Настройках API»** вместо автоматического определения.
 3. Используйте **«Профиль из Riot API»** для доступных данных профиля и **«Коллекция из клиента»** для коллекции аккаунта, открытого в игре.
 4. Переключайтесь между играми, ищите чемпионов, агентов и скины. Для подробностей откройте карточку.
 

@@ -133,6 +133,68 @@ class RankRefreshTests(unittest.TestCase):
         self.assertFalse(self.win._rank_pending)
         self.assertEqual(self.thread.call_count, 1)
 
+    def test_unknown_server_waits_for_saved_session_then_fetches_without_game_or_key(self):
+        account = {"name": "New#Custom", "local_id": "new", "puuid": "owner"}
+        self.win.accounts.append(account)
+        key = account_key(account)
+        record = {"puuid": "owner", "generation": "first", "sso": {"ssid": "cookie"}, "status": "retry"}
+        self.win._profile_sessions[key] = record
+        with patch.object(self.win.sessions, "request") as request:
+            self.win._queue_rank_refresh([account])
+        request.assert_called_once_with(key)
+        self.thread.assert_not_called()
+        record.update(access_token="private-token", expires_at=10**11, status="ready")
+        self.win._on_session_ready(key, "ready")
+        self.app.processEvents()
+        self.assertEqual(self.thread.call_count, 1)
+        args = self.thread.call_args.kwargs["args"]
+        self.assertEqual(args[4], "")
+        self.assertFalse(args[5])  # No Developer API key or local game needed.
+        with patch("app.ui.main_window.resolve_rank_region", return_value="EUW") as resolve, \
+             patch("app.ui.main_window.fetch_auto_rankings", return_value={"ranks": {}}) as fetch:
+            self.win._game_data_worker(*args)
+        resolve.assert_called_once_with(args[1], "private-token")
+        fetch.assert_called_once_with("New#Custom", "EUW", "")
+        self.assertEqual(account["league_region"], "EUW")
+        self.assertNotIn("access_token", account)
+
+    def test_new_region_drops_foreign_rank_and_session_change_rejects_inflight_result(self):
+        account = self.win.accounts[0]
+        account["puuid"] = "owner"
+        key = account_key(account)
+        self.win._profile_sessions[key] = {"generation": "new"}
+        account["games"]["lol"]["ranks"] = {"solo": {"status": "ranked", "tier": "GOLD", "lp": 50}}
+        self.finish(account, lookup_puuid="owner", lookup_generation="old", resolved_region="KR")
+        self.assertNotIn("league_region", account)
+        self.finish(account, lookup_puuid="owner", lookup_generation="new", resolved_region="KR",
+                    data={"ranks": {"solo": {"status": "unavailable"}}})
+        self.assertEqual(account["league_region"], "KR")
+        self.assertEqual(account["games"]["lol"]["ranks"]["solo"]["status"], "unavailable")
+
+    def test_session_retry_keeps_pending_rank_until_session_is_ready(self):
+        account = {"name": "New#Custom", "local_id": "new", "puuid": "owner"}
+        self.win.accounts.append(account)
+        key = account_key(account)
+        self.win._rank_pending.add(key)
+        self.win._rank_waiting_sessions.add(key)
+        self.win._on_session_ready(key, "retry")
+        self.assertIn(key, self.win._rank_pending)
+        self.assertIn(key, self.win._rank_waiting_sessions)
+        self.win._on_session_ready(key, "login")
+        self.assertNotIn(key, self.win._rank_waiting_sessions)
+        self.assertNotIn(key, self.win._rank_pending)
+
+    def test_legacy_default_waits_for_identity_instead_of_requesting_wrong_server(self):
+        account = self.win.accounts[1]
+        account["puuid"] = "owner"
+        key = account_key(account)
+        self.win._profile_sessions[key] = {"puuid": "owner", "sso": {"ssid": "cookie"}, "status": "retry"}
+        with patch.object(self.win.sessions, "request") as request:
+            self.win._queue_rank_refresh([account])
+        request.assert_called_once_with(key)
+        self.thread.assert_not_called()
+        self.assertIn(key, self.win._rank_pending)
+
 
 if __name__ == "__main__":
     unittest.main()
