@@ -1,0 +1,384 @@
+import re
+import time
+import json
+import base64
+import logging
+import math
+import urllib.parse
+
+import requests
+
+from app.core.auth_totp import get_code
+from app.core.errors import RiotApiError
+from app.core.debug_log import mask
+
+log = logging.getLogger(__name__)
+
+def decode_jwt_payload(token):
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload = parts[1]
+        rem = len(payload) % 4
+        if rem:
+            payload += "=" * (4 - rem)
+        value = json.loads(base64.urlsafe_b64decode(payload))
+        return value if isinstance(value, dict) else None
+    except Exception:
+        return None
+
+def is_valid_jwt(token):
+    payload = decode_jwt_payload(token)
+    if payload is None:
+        return False
+    exp = payload.get("exp")
+    if exp is not None and exp < time.time():
+        return False
+    return True
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
+)
+
+def _riot_api_headers(csrf_token):
+    return {
+    'accept': 'application/json',
+    'accept-language': 'en-US,en;q=0.9',
+    'cache-control': 'no-cache',
+    'content-type': 'application/json',
+    'csrf-token': csrf_token,
+    'origin': 'https://account.riotgames.com',
+    'pragma': 'no-cache',
+    'priority': 'u=1, i',
+    'referer': 'https://account.riotgames.com/',
+    'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Brave";v="150"',
+    'sec-ch-ua-mobile': '?0',
+    'sec-ch-ua-platform': '"Windows"',
+    'sec-fetch-dest': 'empty',
+    'sec-fetch-mode': 'cors',
+    'sec-fetch-site': 'same-origin',
+    'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+}
+
+def fetch_account_user(cookies, csrf_token):
+    """Raw `account/v1/user`. Authenticated by the account session cookie + csrf;
+    raises (401/403) when not signed in, so it doubles as a login probe."""
+    resp = requests.get(
+        "https://account.riotgames.com/api/account/v1/user",
+        cookies=cookies,
+        headers=_riot_api_headers(csrf_token),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def riot_id_from_user(data):
+    alias = data.get("alias", {}) if isinstance(data, dict) else {}
+    gn = alias.get("game_name") if alias else None
+    tl = alias.get("tag_line") if alias else None
+    if gn and tl:
+        return f"{gn}#{tl}"
+    if gn:
+        return gn
+    return data.get("username", data.get("sub", "Unknown"))
+
+def puuid_from_user(data):
+    if not isinstance(data, dict):
+        return None
+    return data.get("puuid") or data.get("sub")
+
+def fetch_riot_id(cookies, csrf_token):
+    return riot_id_from_user(fetch_account_user(cookies, csrf_token))
+
+def fetch_mfa_factors(cookies, csrf_token):
+    """List the account's MFA factors (email, riotmobile, ...) and their status."""
+    resp = requests.get(
+        "https://account.riotgames.com/api/mfa/v2/factors",
+        cookies=cookies,
+        headers=_riot_api_headers(csrf_token),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def is_email_mfa_enabled(factors):
+    """True if the account has email MFA enabled (a prerequisite for riotmobile)."""
+    items = factors if isinstance(factors, list) else factors.get("factors", [])
+    for f in items:
+        if isinstance(f, dict) and f.get("factor") == "email":
+            return f.get("status") == "enabled"
+    return False
+
+def fetch_new_csrf_token(cookies):
+    """Fetch a new CSRF token from the account page."""
+    resp = requests.get(
+        "https://account.riotgames.com/",
+        cookies=cookies,
+        headers={
+            'accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
+            'accept-language': 'en-US,en;q=0.9',
+            'cache-control': 'no-cache',
+            'pragma': 'no-cache',
+            'priority': 'u=0, i',
+            'sec-ch-ua': '"Not;A=Brand";v="8", "Chromium";v="150", "Brave";v="150"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"Windows"',
+            'sec-fetch-dest': 'document',
+            'sec-fetch-mode': 'navigate',
+            'sec-fetch-site': 'none',
+            'sec-fetch-user': '?1',
+            'upgrade-insecure-requests': '1',
+            'user-agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36',
+        },
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp.text.split("<meta name='csrf-token' content='")[1].split("'")[0]
+
+def enable_mfa(cookies, csrf_token):
+    resp = requests.post(
+        "https://account.riotgames.com/api/mfa/v2/factors/riotmobile/enable",
+        cookies=cookies,
+        headers=_riot_api_headers(csrf_token),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    try:
+        secret = resp.json().get("secret")
+    except ValueError:
+        secret = None
+    if not secret:
+        raise RiotApiError(
+            "Riot returned no MFA secret — Riot Mobile MFA is likely already "
+            "enabled on this account. Disable it, then re-add. (Open details "
+            "for Riot's exact reply.)",
+            response=resp,
+        )
+    return secret
+
+def verify_mfa(id_token, seed):
+    resp = requests.post(
+        "https://api.account.riotgames.com/mfa/v1/factor/riotmobile/verify",
+        headers={
+            "Authorization": f"Bearer {id_token}",
+            "Content-Type": "application/json",
+        },
+        data=json.dumps({"device": "Redmi Note 12 Pro", "otp": get_code(seed)}),
+        timeout=15,
+    )
+    resp.raise_for_status()
+    return resp
+
+MPS_REGISTER_MFA_URL = (
+    "https://riot-geo.mps.si.riotgames.com/mps/v1/app/riotmobile-mfa/device"
+)
+TOTP_VERIFICATION_URL = (
+    "https://authenticate.riotgames.com/api/v1/session/totp-verification"
+)
+
+def extract_puuid(id_token):
+    """The account puuid is the `sub` claim of the login id_token."""
+    payload = decode_jwt_payload(id_token)
+    if not payload:
+        return None
+    return payload.get("sub")
+
+def register_mfa_push_device(access_token, fcm_token):
+    """Register our FCM token with Riot MPS so this account's logins push to us.
+
+    Authenticated with the account's RSO access token (the `access_token`
+    cookie from account.riotgames.com works). This is a PUT and returns 204.
+    """
+    log.debug(
+        "MPS register: access_token=%s fcm_token=%s -> PUT %s",
+        mask(access_token), mask(fcm_token), MPS_REGISTER_MFA_URL,
+    )
+    resp = requests.put(
+        MPS_REGISTER_MFA_URL,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        },
+        data=json.dumps(
+            {"device_token": fcm_token, "platform": "android", "locale": "en-US"}
+        ),
+        timeout=20,
+    )
+    log.debug(
+        "MPS register response: HTTP %s body=%r",
+        resp.status_code, (resp.text or "")[:300],
+    )
+    resp.raise_for_status()
+    return resp
+
+RSO_AUTHORIZE_URL = "https://auth.riotgames.com/api/v1/authorization"
+SSO_COOKIE_NAMES = ("ssid", "clid", "csid", "tdid", "sub", "ccid", "asid")
+
+_REAUTH_BODY = {
+    "client_id": "ritoplus",
+    "nonce": "1",
+    "redirect_uri": "http://localhost/redirect",
+    "response_type": "token id_token",
+    "scope": "openid account link ban lol summoner offline_access "
+    "riot://riot.authenticator/session.auth",
+}
+
+class SessionExpired(Exception):
+    """Riot requires an interactive login. Never retry this in the background."""
+
+
+class SessionRefreshError(Exception):
+    def __init__(self, message, retry_after=0):
+        super().__init__(message)
+        self.retry_after = retry_after
+
+
+def token_expires_at(token):
+    payload = decode_jwt_payload(token) or {}
+    value = payload.get("exp")
+    return float(value) if type(value) in (int, float) and math.isfinite(value) and value > 0 else None
+
+
+def refresh_sso_session(sso_cookies):
+    """Refresh only an existing authorized SSO session, retaining rotation."""
+    if not sso_cookies or not sso_cookies.get("ssid"):
+        raise SessionExpired("Для QR-входа нужно войти в Riot заново.")
+    session = requests.Session()
+    session.trust_env = False
+    for name, value in sso_cookies.items():
+        if name in SSO_COOKIE_NAMES and isinstance(value, str) and value:
+            session.cookies.set(name, value, domain="auth.riotgames.com")
+    try:
+        resp = session.post(
+            RSO_AUTHORIZE_URL, json=_REAUTH_BODY,
+            headers={"Content-Type": "application/json", "User-Agent": _USER_AGENT},
+            timeout=(5, 15), allow_redirects=False,
+        )
+    except requests.RequestException:
+        raise SessionRefreshError("Нет соединения с Riot. Обновление будет повторено.") from None
+    finally:
+        session.close()
+    if resp.status_code == 429:
+        retry = resp.headers.get("Retry-After", "")
+        raise SessionRefreshError("Riot ограничил частоту обновлений.",
+                                  min(86400, int(retry)) if retry.isdigit() else 60)
+    if resp.status_code in (401, 403):
+        raise SessionExpired("Riot завершил сессию. Войдите заново.")
+    if resp.status_code not in (200, 400):
+        raise SessionRefreshError("Riot временно не может обновить сессию.")
+    try:
+        data = resp.json()
+    except ValueError:
+        raise SessionRefreshError("Не удалось прочитать ответ Riot.") from None
+    if not isinstance(data, dict):
+        raise SessionRefreshError("Не удалось прочитать ответ Riot.")
+    if data.get("type") in ("auth", "multifactor") or data.get("error") in (
+            "auth_failure", "invalid_session", "invalid_grant", "invalid_token", "login_required", "session_expired"):
+        raise SessionExpired("Riot требует повторный вход.")
+    if resp.status_code != 200 or data.get("type") != "response":
+        raise SessionRefreshError("Riot не предоставил новый токен.")
+    uri = (((data.get("response") or {}).get("parameters") or {}).get("uri")) or ""
+    parsed = urllib.parse.urlsplit(uri)
+    parameters = urllib.parse.parse_qs(parsed.fragment or parsed.query)
+    token = parameters.get("access_token", [None])[0]
+    expiry = token_expires_at(token)
+    if expiry is None or expiry <= time.time() + 10:
+        raise SessionRefreshError("Riot не предоставил действующий токен.")
+    rotated = dict(sso_cookies)
+    cookie_expiry = None
+    # Only exact auth-host cookies (or its Riot parent) belong in this jar.
+    for cookie in session.cookies:
+        if cookie.name in SSO_COOKIE_NAMES and cookie.domain.lstrip(".") in ("auth.riotgames.com", "riotgames.com"):
+            rotated[cookie.name] = cookie.value
+            if cookie.name == "ssid" and cookie.expires and cookie.expires > 0:
+                cookie_expiry = cookie.expires
+    return {"access_token": token, "sso": {k: rotated[k] for k in SSO_COOKIE_NAMES if rotated.get(k)},
+            "expires_at": expiry, "cookie_expires_at": cookie_expiry,
+            "cookie_rotated": rotated.get("ssid") != sso_cookies.get("ssid")}
+
+
+def mint_access_token(sso_cookies):
+    """Compatibility helper for authenticator setup; keep rotated cookies."""
+    try:
+        result = refresh_sso_session(sso_cookies)
+    except SessionExpired:
+        return None
+    sso_cookies.clear()
+    sso_cookies.update(result["sso"])
+    return result["access_token"]
+
+RSO_AUTH_HOST = "https://authenticate.riotgames.com"
+QR_SESSION_INFO_PATH = "/api/v1/session/info"
+QR_SESSION_AUTH_PATH = "/api/v1/session/authentication"
+
+_RSO_AUTH_UA = (
+    "RiotGamesApi/26.3.0.0 rso-authenticator "
+    "(Android;12.31;SKQ1.211019.001 test-keys;) ritoplus/5.3.0"
+)
+
+def _rso_auth_headers(access_token):
+    return {
+        "Authorization": f"Bearer {access_token}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+        "User-Agent": _RSO_AUTH_UA,
+    }
+
+def parse_qr_login(text):
+    """Extract (suuid, cluster) from a scanned Riot QR login string."""
+    import urllib.parse
+
+    text = (text or "").strip()
+    if text.startswith("http"):
+        qs = urllib.parse.parse_qs(urllib.parse.urlparse(text).query)
+        return qs.get("suuid", [None])[0], qs.get("cluster", [None])[0]
+    if ":" in text:
+        suuid, cluster = text.split(":", 1)
+        return suuid.strip(), cluster.strip()
+    return None, None
+
+def qr_session_info(access_token, suuid, cluster):
+    """Fetch the pending QR-login details (geolocation, request info)."""
+    resp = requests.get(
+        f"{RSO_AUTH_HOST}{QR_SESSION_INFO_PATH}?suuid={suuid}&cluster={cluster}",
+        headers=_rso_auth_headers(access_token),
+        timeout=20,
+    )
+    resp.raise_for_status()
+    return resp.json()
+
+def qr_approve(access_token, suuid, cluster, remember=True):
+    """Approve a QR login attempt, signing the device in."""
+    resp = requests.post(
+        f"{RSO_AUTH_HOST}{QR_SESSION_AUTH_PATH}",
+        headers=_rso_auth_headers(access_token),
+        data=json.dumps({"suuid": suuid, "cluster": cluster, "remember": remember}),
+        timeout=20,
+    )
+    resp.raise_for_status()
+    return resp.json() if resp.content else {}
+
+def respond_to_mfa(suuid, cluster, puuid, seed, approve):
+    """Approve or deny a login attempt received via push.
+
+    Signed by the current TOTP generated from the account seed.
+    """
+    body = {
+        "suuid": suuid,
+        "cluster": cluster,
+        "puuid": puuid,
+        "totp": get_code(seed),
+        "action": "approve" if approve else "deny",
+        "known_value": None,
+    }
+    resp = requests.post(
+        TOTP_VERIFICATION_URL,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        data=json.dumps(body),
+        timeout=20,
+    )
+    resp.raise_for_status()
+    return resp

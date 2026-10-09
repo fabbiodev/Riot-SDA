@@ -1,0 +1,157 @@
+name: Build & Release
+
+# Builds Riot2FA.exe from source on GitHub's runners so anyone can verify the
+# release binary was produced from this public repo (not tampered with locally).
+#
+#   - Push a tag like v2.1.1  -> builds and publishes a GitHub Release with the
+#     portable exe, installer, checksums, and build-provenance attestation.
+#   - Run manually (Actions -> Build & Release -> Run workflow) -> builds and
+#     uploads both Windows packages as a workflow artifact, without a release.
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      obfuscate:
+        description: "Obfuscate with PyArmor (fewer AV false positives)"
+        type: boolean
+        default: true
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write        # create the release / upload assets
+  id-token: write        # sign the provenance attestation
+  attestations: write    # record the provenance attestation
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r build/requirements-build.txt
+
+      - name: Install Patchright Chromium
+        run: python -m patchright install chromium
+
+      - name: Test updater
+        run: python -m unittest discover -s tests -v
+
+      - name: Build
+        shell: pwsh
+        run: |
+          if ('${{ github.event.inputs.obfuscate }}' -eq 'false') {
+            python build/build.py --no-obfuscate
+          } else {
+            python build/build.py
+          }
+
+      - name: Install Inno Setup
+        run: choco install innosetup --yes --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $ver = (python -c "from app.version import __version__; print(__version__)").Trim()
+          & "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" "/DAppVersion=$ver" build/Riot2FA.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Smoke test installer
+        shell: pwsh
+        run: |
+          $target = Join-Path $env:RUNNER_TEMP 'Riot2FA-Smoke'
+          $setup = (Resolve-Path 'dist/Riot2FA-Setup.exe').Path
+          $install = Start-Process -FilePath $setup -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$target`"") -Wait -PassThru -WindowStyle Hidden
+          if ($install.ExitCode -ne 0) { throw "Installer exited with $($install.ExitCode)" }
+          if (-not (Test-Path (Join-Path $target 'Riot2FA.exe'))) { throw 'Installed executable is missing' }
+          if (-not (Test-Path (Join-Path $target '_internal/ms-playwright'))) { throw 'Bundled browser is missing' }
+          if (-not (Test-Path (Join-Path $env:APPDATA 'Microsoft/Windows/Start Menu/Programs/Riot 2FA/Riot 2FA.lnk'))) { throw 'Start Menu shortcut is missing' }
+          $uninstall = Start-Process -FilePath (Join-Path $target 'unins000.exe') -ArgumentList @('/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART') -Wait -PassThru -WindowStyle Hidden
+          if ($uninstall.ExitCode -ne 0) { throw "Uninstaller exited with $($uninstall.ExitCode)" }
+
+      - name: Verify tag matches app version
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $ver = (python -c "import sys; sys.path.insert(0,'.'); from app.version import __version__; print(__version__)").Trim()
+          $tag = '${{ github.ref_name }}'.TrimStart('v')
+          Write-Host "app.version=$ver  tag=$tag"
+          if ($ver -ne $tag) {
+            Write-Error "Tag ($tag) does not match app/version.py ($ver). Bump the version or fix the tag."
+            exit 1
+          }
+
+      - name: Checksum
+        shell: pwsh
+        run: |
+          foreach ($file in @('Riot2FA.exe', 'Riot2FA-Setup.exe')) {
+            $h = (Get-FileHash "dist/$file" -Algorithm SHA256).Hash.ToLower()
+            "$h  $file" | Out-File -Encoding ascii "dist/$file.sha256"
+            Write-Host "$file SHA-256: $h"
+          }
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/*.exe
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Riot2FA
+          path: |
+            dist/Riot2FA.exe
+            dist/Riot2FA.exe.sha256
+            dist/Riot2FA-Setup.exe
+            dist/Riot2FA-Setup.exe.sha256
+          if-no-files-found: error
+
+      - name: Extract changelog notes
+        if: startsWith(github.ref, 'refs/tags/')
+        shell: pwsh
+        run: |
+          $ver = '${{ github.ref_name }}'.TrimStart('v')
+          $notes = ""
+          if (Test-Path CHANGELOG.md) {
+            $inSection = $false
+            foreach ($line in Get-Content CHANGELOG.md) {
+              if ($line -match '^\s*##\s+') {
+                if ($inSection) { break }
+                if ($line -match ('^\s*##\s+v?' + [regex]::Escape($ver) + '(\s|$)')) {
+                  $inSection = $true
+                  continue
+                }
+              }
+              if ($inSection) { $notes += "$line`n" }
+            }
+          }
+          $notes = $notes.Trim()
+          if (-not $notes) { $notes = "Release $ver" }
+          Set-Content -Path release_notes.md -Value $notes -Encoding utf8
+          Write-Host "--- release notes ---"; Write-Host $notes
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Riot2FA.exe
+            dist/Riot2FA.exe.sha256
+            dist/Riot2FA-Setup.exe
+            dist/Riot2FA-Setup.exe.sha256
+          body_path: release_notes.md
+          generate_release_notes: true
+          fail_on_unmatched_files: true
