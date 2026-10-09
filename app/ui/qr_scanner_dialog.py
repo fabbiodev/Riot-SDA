@@ -44,8 +44,9 @@ class QrScannerDialog(QDialog):
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Tool
+            | Qt.WindowType.Window
         )
+        self.setWindowModality(Qt.WindowModality.NonModal)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         self.resize(300, 300)
 
@@ -100,7 +101,30 @@ class QrScannerDialog(QDialog):
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._scan_tick)
-        QTimer.singleShot(1000, lambda: self._timer.start(450))
+        self._startup_timer = QTimer(self)
+        self._startup_timer.setSingleShot(True)
+        self._startup_timer.timeout.connect(self._start_scanning)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        if self._result is None:
+            self._startup_timer.start(1000)
+
+    def hideEvent(self, event):
+        self._stop_scanning()
+        super().hideEvent(event)
+
+    def _start_scanning(self):
+        if self.isVisible() and not self.isMinimized() and self._result is None:
+            self._timer.start(450)
+
+    def _stop_scanning(self):
+        self._startup_timer.stop()
+        self._timer.stop()
+
+    def done(self, result):
+        self._stop_scanning()
+        super().done(result)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and self.bar.geometry().contains(
@@ -121,7 +145,8 @@ class QrScannerDialog(QDialog):
         super().mouseReleaseEvent(event)
 
     def _scan_tick(self):
-
+        if not self.isVisible() or self.isMinimized() or self._result is not None:
+            return
         inset = 4
         tl = self.viewport.mapToGlobal(QPoint(inset, inset))
         w = max(1, self.viewport.width() - 2 * inset)

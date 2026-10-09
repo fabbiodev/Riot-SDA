@@ -89,6 +89,8 @@ class MainWindow(QMainWindow):
         self.sessions = SessionManager(self, store=None if start_services else MemorySessionStore(), autostart=start_services)
         self._profile_sessions = self.sessions.sessions
         self._pending_qr = {}
+        self._qr_scanner = None
+        QApplication.instance().aboutToQuit.connect(self._close_qr_scanner)
         self.api_keys = {"lol": os.getenv("RIOT_API_KEY", ""),
                          "tft": os.getenv("RIOT_TFT_API_KEY", ""),
                          "valorant": os.getenv("RIOT_VALORANT_API_KEY", "")}
@@ -928,10 +930,33 @@ class MainWindow(QMainWindow):
     def _scan_qr(self):
         from app.ui.qr_scanner_dialog import QrScannerDialog
 
-        scanner = QrScannerDialog(self)
-        if scanner.exec() != QDialog.DialogCode.Accepted or not scanner.result_text:
+        if self._qr_scanner is not None:
+            self._qr_scanner.showNormal()
+            self._qr_scanner.raise_()
+            self._qr_scanner.activateWindow()
             return
-        suuid, cluster = parse_qr_login(scanner.result_text)
+        scanner = QrScannerDialog()
+        scanner.setWindowIcon(QIcon(ICON_PATH))
+        self._qr_scanner = scanner
+        scanner.finished.connect(lambda result: self._on_qr_scan_finished(scanner, result))
+        self.destroyed.connect(scanner.close)
+        scanner.show()
+        scanner.raise_()
+        scanner.activateWindow()
+
+    def _close_qr_scanner(self):
+        if self._qr_scanner is not None:
+            self._qr_scanner.reject()
+
+    def _on_qr_scan_finished(self, scanner, result):
+        if self._qr_scanner is not scanner:
+            return
+        text = scanner.result_text
+        self._qr_scanner = None
+        scanner.deleteLater()
+        if result != QDialog.DialogCode.Accepted or not text:
+            return
+        suuid, cluster = parse_qr_login(text)
         if not suuid or not cluster:
             QMessageBox.warning(
                 self,
