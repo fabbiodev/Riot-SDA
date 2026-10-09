@@ -1,6 +1,7 @@
 """Read personal fields only from the selected account's authenticated session."""
 
 from datetime import date, datetime, timezone
+from html.parser import HTMLParser
 import math
 import re
 import time
@@ -8,7 +9,7 @@ from urllib.parse import urljoin, urlsplit
 
 import requests
 
-from app.api.riot_api import SSO_COOKIE_NAMES, token_expires_at
+from app.api.riot_api import SSO_COOKIE_NAMES, token_expires_at, _riot_api_headers
 
 PORTAL = "https://account.riotgames.com"
 USERINFO = "https://auth.riotgames.com/userinfo"
@@ -46,6 +47,60 @@ def same_owner(owner, value):
             str(value.get("sub") or "").casefold() == str(owner).casefold())
 
 
+class _PageToken(HTMLParser):
+    token = None
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        if tag == "meta" and values.get("name") == "csrf-token":
+            self.token = values.get("content")
+
+
+def page_csrf(html):
+    parser = _PageToken()
+    parser.feed(html if isinstance(html, str) else "")
+    return parser.token
+
+
+def short_text(value, limit=120):
+    return value.strip()[:limit] if isinstance(value, str) and not any(ord(c) < 32 for c in value) else None
+
+
+def extract_settings(settings):
+    """Save display metadata only; MFA secrets, client IDs and URLs are excluded."""
+    result = {}
+    factors = settings.get("mfa")
+    if isinstance(factors, list):
+        result["mfa_factors"] = [{"factor": f["factor"], "status": f["status"],
+                                  "required": f.get("mfaOptIn") == "FORCE_ENABLED"}
+                                 for f in factors[:12] if isinstance(f, dict)
+                                 and isinstance(f.get("factor"), str) and re.fullmatch(r"[a-z_]{1,30}", f["factor"])
+                                 and f.get("status") in ("enabled", "disabled", "action_required", "issue")]
+    links = settings.get("apps")
+    if isinstance(links, dict) and isinstance(links.get("links"), list):
+        apps = []
+        for link in links["links"][:50]:
+            if not isinstance(link, dict):
+                continue
+            names = link.get("localizedClientName")
+            name = short_text(names.get("default")) if isinstance(names, dict) else None
+            app = {"name": name or "Приложение Riot"}
+            connected = creation_date(link.get("connectionTime"))
+            if connected:
+                app["connected_at"] = connected
+            apps.append(app)
+        result["authorized_apps"] = apps
+    privacy = settings.get("privacy")
+    if isinstance(privacy, dict):
+        for remote, local in (("email_subscribe", "riot_news"), ("third_party_opt_in", "partner_offers")):
+            if type(privacy.get(remote)) is bool:
+                result[local] = privacy[remote]
+    game_pass = settings.get("game_pass")
+    if isinstance(game_pass, dict) and game_pass.get("status") in ("ACTIVE", "PENDING", "NONE"):
+        result["game_pass"] = game_pass["status"]
+    return result
+
+
 def extract_details(owner, user=None, userinfo=None):
     """Whitelist confirmed schema fields; raw PII responses/tokens are never saved."""
     result = {}
@@ -53,6 +108,29 @@ def extract_details(owner, user=None, userinfo=None):
         if response is not None and not same_owner(owner, response):
             raise AccountDetailsError("Riot вернул сведения другого аккаунта.")
     if user:
+        for remote, local in (("username", "account_login"), ("region", "account_region"), ("locale", "locale")):
+            text = short_text(user.get(remote), 80)
+            if text:
+                result[local] = text
+        email = user.get("email")
+        if isinstance(email, str) and len(email) <= 254 and re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email):
+            result["email"] = email
+        email_status = user.get("email_status")
+        if email_status in ("validated", "not_validated"):
+            result["email_verified"] = email_status == "validated"
+        alias = user.get("alias")
+        if isinstance(alias, dict):
+            name, tag = short_text(alias.get("game_name")), short_text(alias.get("tag_line"), 30)
+            if name and tag:
+                result["account_riot_id"] = name + "#" + tag
+        providers = []
+        for field in ("federated_identities", "linked_identities"):
+            values = user.get(field)
+            if isinstance(values, list):
+                providers.extend(v.lower() for v in values[:20] if isinstance(v, str)
+                                 and re.fullmatch(r"[A-Za-z_]{1,30}", v) and v.lower() != "riot_identity")
+        if any(isinstance(user.get(k), list) for k in ("federated_identities", "linked_identities")):
+            result["connected_accounts"] = sorted(set(providers))
         birthday = iso_date(user.get("birth_date"))
         if birthday:
             result["birthday"] = birthday
@@ -61,6 +139,12 @@ def extract_details(owner, user=None, userinfo=None):
             if 1900 <= year <= date.today().year:
                 result["birthday_masked"] = user["birth_date"]
     if userinfo:
+        if "email_verified" not in result and type(userinfo.get("email_verified")) is bool:
+            result["email_verified"] = userinfo["email_verified"]
+        password = userinfo.get("pw")
+        changed = creation_date(password.get("cng_at")) if isinstance(password, dict) else None
+        if changed:
+            result["password_changed"] = changed
         acct = userinfo.get("acct")
         created = creation_date(acct.get("created_at")) if isinstance(acct, dict) else None
         if created:
@@ -69,7 +153,8 @@ def extract_details(owner, user=None, userinfo=None):
         if type(verified) is bool:
             result["phone_verified"] = verified
     country = (user or {}).get("country") or (userinfo or {}).get("country")
-    if isinstance(country, str) and len(country) in (2, 3) and country.isascii() and country.isalpha():
+    if (isinstance(country, str) and len(country) in (2, 3) and country.isascii()
+            and country.isalpha() and country.lower() != "nan"):
         result["current_country"] = country.upper()
     return result
 
@@ -117,6 +202,7 @@ def fetch_account_details(account, record):
     if not owner or str(record.get("puuid") or "").casefold() != str(owner).casefold():
         raise AccountDetailsError("Для личных сведений нужен вход в выбранный аккаунт.")
     user = userinfo = None
+    settings, unavailable = {}, []
     try:
         with requests.Session() as session:
             session.trust_env = False
@@ -134,15 +220,37 @@ def fetch_account_details(account, record):
                     if name in SSO_COOKIE_NAMES and isinstance(value, str):
                         session.cookies.set(name, value, domain="auth.riotgames.com", path="/")
                 page = _portal_get(session, PORTAL + "/")
-                csrf = next((c.value for c in session.cookies if c.name == "a12l-csrf-prod"
-                             and c.domain.lstrip(".") == "account.riotgames.com"), None)
+                csrf = page_csrf(page.text)
                 if page.status_code != 200 or not csrf:
                     raise AccountDetailsError("Для даты рождения нужен повторный вход в Riot SDA.", 300)
-                response = session.get(PORTAL + "/api/account/v1/user", headers={"csrf-token": csrf},
+                headers = _riot_api_headers(csrf)
+                response = session.get(PORTAL + "/api/account/v1/user", headers=headers,
                                        timeout=(5, 15), allow_redirects=False)
                 user = _response_json(response)
+                if not same_owner(owner, user):
+                    raise AccountDetailsError("Riot вернул сведения другого аккаунта.")
+                for key, path in (("mfa", "/api/mfa/v2/factors"),
+                                  ("apps", "/api/links/v1/authorizations"),
+                                  ("privacy", "/api/privacy/v1/subscriptions"),
+                                  ("game_pass", "/api/subscriptions/v1/game-pass-status")):
+                    try:
+                        response = session.get(PORTAL + path, headers=headers, timeout=(5, 15), allow_redirects=False)
+                        if response.status_code == 429:
+                            _response_json(response)  # Respect the same global cooldown as the base request.
+                        if response.status_code == 200:
+                            data = response.json()
+                            if isinstance(data, list if key == "mfa" else dict):
+                                settings[key] = data
+                                continue
+                        unavailable.append(key)
+                    except (requests.RequestException, ValueError):
+                        unavailable.append(key)
         if user is None and userinfo is None:
             raise AccountDetailsError("Для личных сведений нужен вход в выбранный аккаунт.")
-        return extract_details(owner, user, userinfo)
+        result = extract_details(owner, user, userinfo)
+        result.update(extract_settings(settings))
+        result["unavailable_sections"] = unavailable
+        result["settings_version"] = 2
+        return result
     except requests.RequestException:
         raise AccountDetailsError("Не удалось связаться с Riot. Сохранённые сведения доступны.") from None

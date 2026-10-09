@@ -14,7 +14,10 @@ from app.core.search import account_key
 from app.core.session_store import _dpapi, VaultError
 from app.core.storage import APPDATA_DIR
 
-AUTO_FIELDS = {"birthday", "birthday_masked", "registered", "phone_verified", "current_country"}
+AUTO_FIELDS = {"birthday", "birthday_masked", "registered", "phone_verified", "current_country", "email",
+               "email_verified", "account_login", "account_riot_id", "account_region", "locale",
+               "password_changed", "connected_accounts", "authorized_apps", "mfa_factors", "riot_news",
+               "partner_offers", "game_pass", "unavailable_sections", "settings_version"}
 MANUAL_FIELDS = {"phone", "birthday", "registered", "registration_country", "registered_approximate"}
 
 
@@ -151,7 +154,8 @@ class AccountDetailsManager(QObject):
             info = self.get(account)
             fields = info.get("riot", {})
             complete = (("birthday" in fields or "birthday_masked" in fields)
-                        and all(k in fields for k in ("registered", "phone_verified")))
+                        and all(k in fields for k in ("registered", "phone_verified"))
+                        and fields.get("settings_version") == 2)
             if complete and time.time() - (info.get("updated_at") or 0) < 86400:
                 continue
             generation = session.get("generation")

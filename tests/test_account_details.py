@@ -14,7 +14,7 @@ from PyQt6.QtTest import QTest
 import requests
 
 from app.api.account_details import (extract_details, fetch_account_details, AccountDetailsError,
-                                     creation_date, _portal_get)
+                                     creation_date, _portal_get, extract_settings, page_csrf)
 from app.core.account_details import (AccountDetailsManager, AccountDetailsStore, MemoryDetailsStore,
                                       clean_manual)
 from app.core.search import account_key
@@ -39,6 +39,7 @@ def token():
 def response(data=None, code=200, headers=None):
     result = Mock(status_code=code, headers=headers or {})
     result.json.return_value = data
+    result.text = '<meta content="synthetic-page-token" name="csrf-token">'
     return result
 
 
@@ -46,10 +47,11 @@ class AccountDetailsApiTests(unittest.TestCase):
     def test_only_confirmed_fields_and_account_creation_timestamp(self):
         details = extract_details(ACCOUNT["puuid"], USER, INFO)
         self.assertEqual(details, {"birthday": "1998-04-12", "registered": "2017-07-14",
-                                   "phone_verified": False, "current_country": "RU"})
+                                   "phone_verified": False, "current_country": "RU",
+                                   "account_login": "private-login", "email": "private@example.invalid"})
         self.assertNotIn("registration_country", details)
         self.assertNotIn("phone", details)
-        self.assertNotIn("email", details)
+        self.assertNotIn("email_domain", details)
 
     def test_no_guess_from_age_country_or_token_issue_date(self):
         info = dict(INFO, acct={}, age=28)
@@ -58,7 +60,9 @@ class AccountDetailsApiTests(unittest.TestCase):
 
     def test_masked_birthday_is_preserved_without_inventing_day_and_month(self):
         result = extract_details(ACCOUNT["puuid"], dict(USER, birth_date="1998-**-**", country="RUS"))
-        self.assertEqual(result, {"birthday_masked": "1998-**-**", "current_country": "RUS"})
+        self.assertEqual(result["birthday_masked"], "1998-**-**")
+        self.assertEqual(result["current_country"], "RUS")
+        self.assertNotIn("birthday", result)
 
     def test_wrong_owner_rejected_in_either_source(self):
         for user, info in ((dict(USER, sub="other"), INFO), (USER, dict(INFO, sub="other"))):
@@ -68,7 +72,10 @@ class AccountDetailsApiTests(unittest.TestCase):
     def test_invalid_dates_and_phone_types_are_unknown(self):
         value = extract_details(ACCOUNT["puuid"], dict(USER, birth_date="2020-02-30"),
                                 dict(INFO, acct={"created_at": float("nan")}, phone_number_verified="false"))
-        self.assertEqual(value, {"current_country": "RU"})
+        self.assertNotIn("birthday", value)
+        self.assertNotIn("registered", value)
+        self.assertNotIn("phone_verified", value)
+        self.assertEqual(value["current_country"], "RU")
         for invalid in (None, True, float("inf"), -1, time.time() + 500, "1500000000"):
             self.assertIsNone(creation_date(invalid))
         self.assertEqual(creation_date(1500000000000), "2017-07-14")
@@ -83,7 +90,8 @@ class AccountDetailsApiTests(unittest.TestCase):
 
     def test_fetch_checks_owners_cookie_domains_and_tls(self):
         session = self.fake_session()
-        session.get.side_effect = [response(INFO), response(), response(USER)]
+        session.get.side_effect = [response(INFO), response(), response(USER),
+                                  response([]), response({"links": []}), response({}), response({"status": "NONE"})]
         record = {"puuid": ACCOUNT["puuid"], "sso": {"ssid": "synthetic-sso", "unknown": "discard"},
                   "access_token": token()}
         with patch("app.api.account_details.requests.Session", return_value=session):
@@ -97,6 +105,7 @@ class AccountDetailsApiTests(unittest.TestCase):
             self.assertFalse(call.kwargs.get("allow_redirects", True))
             self.assertNotEqual(call.kwargs.get("verify"), False)
         self.assertNotIn("Authorization", session.get.call_args_list[-1].kwargs["headers"])
+        self.assertEqual(session.get.call_args_list[-1].kwargs["headers"]["csrf-token"], "synthetic-page-token")
 
     def test_untrusted_redirect_is_never_requested(self):
         for destination in ("http://account.riotgames.com/", "https://evil.invalid/", "https://auth.riotgames.com@evil.invalid/"):
@@ -108,7 +117,8 @@ class AccountDetailsApiTests(unittest.TestCase):
 
     def test_revoked_access_token_does_not_block_birthday_via_sso(self):
         session = self.fake_session()
-        session.get.side_effect = [response(code=401), response(), response(USER)]
+        session.get.side_effect = [response(code=401), response(), response(USER),
+                                  response([]), response({"links": []}), response({}), response({"status": "NONE"})]
         with patch("app.api.account_details.requests.Session", return_value=session):
             result = fetch_account_details(ACCOUNT, {"puuid": ACCOUNT["puuid"], "access_token": token(),
                                                       "sso": {"ssid": "synthetic"}})
@@ -126,12 +136,64 @@ class AccountDetailsApiTests(unittest.TestCase):
         with self.assertRaises(AccountDetailsError):
             fetch_account_details(ACCOUNT, {"puuid": "other"})
 
+    def test_csrf_comes_from_page_meta_not_cookie_and_handles_attribute_order(self):
+        self.assertEqual(page_csrf('<meta content="page&amp;token" name="csrf-token"/>'), "page&token")
+        self.assertEqual(page_csrf("<meta name='csrf-token' content='another-token'>"), "another-token")
+        self.assertIsNone(page_csrf("<html>No token</html>"))
+
+    def test_settings_exclude_mfa_secrets_oauth_ids_and_urls(self):
+        result = extract_settings({"mfa": [{"factor": "riotmobile", "status": "enabled", "secret": "discard-secret"},
+                                            {"factor": "email", "status": "enabled", "mfaOptIn": "FORCE_ENABLED"}],
+                                   "apps": {"links": [{"clientId": "discard-id", "scopes": ["secret"],
+                                                        "localizedClientName": {"default": "Example app"},
+                                                        "localizedLogoURI": {"default": "https://private.invalid"},
+                                                        "connectionTime": 1500000000000}]},
+                                   "privacy": {"email_subscribe": True, "third_party_opt_in": False},
+                                   "game_pass": {"status": "ACTIVE", "remaining": 15}})
+        self.assertEqual(result["authorized_apps"], [{"name": "Example app", "connected_at": "2017-07-14"}])
+        self.assertTrue(result["mfa_factors"][1]["required"])
+        self.assertTrue(result["riot_news"])
+        self.assertFalse(result["partner_offers"])
+        self.assertEqual(result["game_pass"], "ACTIVE")
+        text = json.dumps(result)
+        for secret in ("discard-secret", "discard-id", "private.invalid", "scopes", "remaining"):
+            self.assertNotIn(secret, text)
+
+    def test_email_state_and_connected_accounts_match_portal_not_available_methods(self):
+        user = dict(USER, email_status="not_validated", federated_identities=["google"],
+                    linked_identities=["discord"], alias={"game_name": "Example", "tag_line": "EUW"})
+        details = extract_details(ACCOUNT["puuid"], user, dict(INFO, email_verified=True, pw={"cng_at": 1500000000}))
+        self.assertFalse(details["email_verified"])
+        self.assertEqual(details["connected_accounts"], ["discord", "google"])
+        self.assertEqual(details["password_changed"], "2017-07-14")
+        self.assertEqual(details["account_riot_id"], "Example#EUW")
+
+    def test_optional_failure_does_not_hide_account_and_unknown_is_not_disabled(self):
+        session = self.fake_session()
+        session.get.side_effect = [response(INFO), response(), response(USER), response(code=403),
+                                  response({"links": []}), response(code=503), response(code=403)]
+        with patch("app.api.account_details.requests.Session", return_value=session):
+            details = fetch_account_details(ACCOUNT, {"puuid": ACCOUNT["puuid"], "sso": {"ssid": "synthetic"}, "access_token": token()})
+        self.assertEqual(details["birthday"], "1998-04-12")
+        self.assertEqual(details["unavailable_sections"], ["mfa", "privacy", "game_pass"])
+        self.assertNotIn("mfa_factors", details)
+        self.assertNotIn("game_pass", details)
+        self.assertEqual(details["authorized_apps"], [])
+
+    def test_wrong_portal_owner_stops_before_any_optional_request(self):
+        session = self.fake_session()
+        session.get.side_effect = [response(), response(dict(USER, sub="other"))]
+        with patch("app.api.account_details.requests.Session", return_value=session):
+            with self.assertRaises(AccountDetailsError):
+                fetch_account_details(ACCOUNT, {"puuid": ACCOUNT["puuid"], "sso": {"ssid": "synthetic"}})
+        self.assertEqual(session.get.call_count, 2)
+
 
 class AccountDetailsStoreTests(unittest.TestCase):
     def test_windows_encryption_and_exclusion_from_account_export(self):
         with tempfile.TemporaryDirectory() as directory:
             store = AccountDetailsStore(Path(directory) / "details.dpapi")
-            records = {"synthetic-owner": {"riot": {"birthday": "1998-04-12", "email": "discard"},
+            records = {"synthetic-owner": {"riot": {"birthday": "1998-04-12", "email": "private@example.invalid", "access_token": "discard"},
                                            "manual": {"phone": "+7 999 123 45 67", "registration_country": "Россия"},
                                            "updated_at": 123}}
             store.save(records)
@@ -140,11 +202,14 @@ class AccountDetailsStoreTests(unittest.TestCase):
             self.assertNotIn(b"999 123", raw)
             loaded = store.load()
             self.assertEqual(loaded["synthetic-owner"]["manual"]["registration_country"], "Россия")
-            self.assertNotIn("email", loaded["synthetic-owner"]["riot"])
+            self.assertNotIn(b"private@example.invalid", raw)
+            self.assertEqual(loaded["synthetic-owner"]["riot"]["email"], "private@example.invalid")
+            self.assertNotIn("access_token", loaded["synthetic-owner"]["riot"])
             account = dict(ACCOUNT, seed="JBSWY3DPEHPK3PXP", personal_details=loaded)
             exported = import_account(export_account(account))
             self.assertNotIn("personal_details", exported)
             self.assertNotIn("birthday", exported)
+            self.assertNotIn("email", exported)
             self.assertEqual(exported["puuid"], ACCOUNT["puuid"])
 
     def test_corrupt_vault_is_not_silently_overwritten_on_load(self):
@@ -209,6 +274,32 @@ class AccountDetailsUiTests(unittest.TestCase):
         self.assertIn("день и месяц скрыты", dialog.sources["birthday"].text())
         self.assertEqual(dialog.values["registration_country"].text(), "Riot не предоставил")
         self.assertIn("RUS", dialog.country.text())
+        dialog.reject()
+
+    def test_security_and_connections_show_sources_without_plain_email_by_default(self):
+        self.manager.put_login(ACCOUNT, {"email": "private@example.invalid", "email_verified": True,
+                                        "mfa_factors": [{"factor": "email", "status": "enabled", "required": False}],
+                                        "connected_accounts": ["google"], "authorized_apps": [], "game_pass": "NONE",
+                                        "riot_news": False, "partner_offers": True})
+        dialog = AccountDetailsDialog(ACCOUNT, self.manager)
+        self.assertEqual(dialog.tabs.count(), 3)
+        self.assertNotIn("private@", dialog.email_value.text())
+        dialog.show_email.setChecked(True)
+        self.assertEqual(dialog.email_value.text(), "private@example.invalid")
+        self.assertIn("подтверждена", dialog.email_note.text())
+        self.assertEqual(dialog.providers.text(), "Google")
+        self.assertEqual(dialog.apps_status.text(), "Нет подключённых приложений")
+        self.assertIn("не активен", dialog.game_pass.text())
+        self.assertIn("Новости Riot: Выключены", dialog.subscriptions.text())
+        dialog.reject()
+
+    def test_cached_optional_sections_are_labelled_when_refresh_is_unavailable(self):
+        self.manager.put_login(ACCOUNT, {"mfa_factors": [], "authorized_apps": [], "game_pass": "ACTIVE",
+                                        "unavailable_sections": ["mfa", "apps", "privacy", "game_pass"]})
+        dialog = AccountDetailsDialog(ACCOUNT, self.manager)
+        self.assertIn("Сохранённые", dialog.mfa_status.text())
+        self.assertIn("Сохранённые", dialog.apps_status.text())
+        self.assertIn("сохранено", dialog.game_pass.text())
         dialog.reject()
 
     def test_late_result_after_removal_does_not_restore_private_data(self):

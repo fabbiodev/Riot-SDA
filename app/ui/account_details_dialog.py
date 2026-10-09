@@ -4,7 +4,8 @@ from datetime import date, datetime
 
 from PyQt6.QtCore import Qt, QLocale
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
-                             QLabel, QCheckBox, QFormLayout, QLineEdit, QMessageBox)
+                             QLabel, QCheckBox, QFormLayout, QLineEdit, QMessageBox, QTabWidget,
+                             QWidget, QScrollArea)
 
 from app.core.account_details import clean_manual
 from app.core.search import account_key
@@ -105,12 +106,29 @@ class AccountDetailsDialog(QDialog):
         super().__init__(parent)
         self.account, self.manager = dict(account), manager
         self.setWindowTitle("Об аккаунте")
-        self.setMinimumWidth(550)
+        self.setMinimumWidth(600)
+        self.resize(640, 660)
         root = QVBoxLayout(self)
         root.setContentsMargins(24, 22, 24, 22)
         root.setSpacing(16)
         root.addWidget(label("Об аккаунте", "dialogTitle"))
         root.addWidget(label(str(account.get("name", "Аккаунт")), "accountDetailsName"))
+        self.tabs = QTabWidget()
+        root.addWidget(self.tabs, 1)
+        self.pages = {}
+        for key, title in (("information", "Сведения"), ("security", "Защита"), ("connections", "Связи")):
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            content = QWidget()
+            content.setObjectName("accountSettingsPage")
+            box = QVBoxLayout(content)
+            box.setContentsMargins(2, 16, 2, 8)
+            box.setSpacing(14)
+            scroll.setWidget(content)
+            self.tabs.addTab(scroll, title)
+            self.pages[key] = box
+        information = self.pages["information"]
         grid = QGridLayout()
         grid.setSpacing(12)
         self.values, self.sources = {}, {}
@@ -131,14 +149,59 @@ class AccountDetailsDialog(QDialog):
             grid.addWidget(card, i // 2, i % 2)
         grid.setColumnStretch(0, 1)
         grid.setColumnStretch(1, 1)
-        root.addLayout(grid)
+        information.addLayout(grid)
         self.show_phone = QCheckBox("Показать номер из личной заметки")
         self.show_phone.toggled.connect(self.render)
-        root.addWidget(self.show_phone)
+        information.addWidget(self.show_phone)
         self.country = label("")
-        root.addWidget(self.country)
-        root.addWidget(label("Riot не всегда возвращает сам номер и страну регистрации. "
-                             "Их можно дополнить по своим данным или выгрузке из поддержки Riot."))
+        information.addWidget(self.country)
+        self.identity = label("")
+        self.identity.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        information.addWidget(self.identity)
+        information.addWidget(label("Данные загружены из настроек Riot. Скрытые сведения можно дополнить вручную; "
+                                    "день и месяц рождения сайт тоже может маскировать."))
+        information.addStretch()
+        security = self.pages["security"]
+        self.email_value = label("—", "personalValue")
+        self.email_value.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.email_note = label("")
+        email_card = QFrame()
+        email_card.setObjectName("personalCard")
+        email_box = QVBoxLayout(email_card)
+        email_box.setContentsMargins(16, 14, 16, 14)
+        email_box.addWidget(label("Почта аккаунта"))
+        email_box.addWidget(self.email_value)
+        email_box.addWidget(self.email_note)
+        security.addWidget(email_card)
+        self.show_email = QCheckBox("Показать адрес почты")
+        self.show_email.toggled.connect(self.render)
+        security.addWidget(self.show_email)
+        self.password_changed = label("")
+        security.addWidget(self.password_changed)
+        security.addWidget(label("Двухфакторная защита", "personalValue"))
+        self.mfa_status = label("")
+        security.addWidget(self.mfa_status)
+        self.mfa_box = QVBoxLayout()
+        self.mfa_box.setSpacing(9)
+        security.addLayout(self.mfa_box)
+        security.addWidget(label("Настройки показаны как на сайте Riot. Изменить их можно в личном кабинете."))
+        security.addStretch()
+        connections = self.pages["connections"]
+        connections.addWidget(label("Способы входа и привязки", "personalValue"))
+        self.providers = label("")
+        connections.addWidget(self.providers)
+        self.game_pass = label("")
+        connections.addWidget(self.game_pass)
+        connections.addWidget(label("Приложения с доступом к аккаунту", "personalValue"))
+        self.apps_status = label("")
+        connections.addWidget(self.apps_status)
+        self.apps_box = QVBoxLayout()
+        self.apps_box.setSpacing(9)
+        connections.addLayout(self.apps_box)
+        connections.addWidget(label("Параметры рассылок", "personalValue"))
+        self.subscriptions = label("")
+        connections.addWidget(self.subscriptions)
+        connections.addStretch()
         self.status = label("")
         root.addWidget(self.status)
         row = QHBoxLayout()
@@ -170,6 +233,69 @@ class AccountDetailsDialog(QDialog):
             except ValueError as exc:
                 QMessageBox.warning(self, "Об аккаунте", str(exc))
 
+    @staticmethod
+    def _fill_rows(box, entries):
+        while box.count():
+            item = box.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for title, detail in entries:
+            card = QFrame()
+            card.setObjectName("personalCard")
+            row = QHBoxLayout(card)
+            row.setContentsMargins(13, 10, 13, 10)
+            row.addWidget(label(title, ""), 1)
+            row.addWidget(label(detail))
+            box.addWidget(card)
+
+    def _render_settings(self, riot):
+        email = riot.get("email")
+        if email:
+            local, _, domain = email.partition("@")
+            masked = local[:1] + "•••@" + domain
+            self.email_value.setText(email if self.show_email.isChecked() else masked)
+        else:
+            self.email_value.setText("Riot не предоставил")
+        verified = riot.get("email_verified")
+        self.email_note.setText("Riot · " + ("почта подтверждена" if verified is True else
+                                            "почта не подтверждена" if verified is False else "статус неизвестен"))
+        self.show_email.setVisible(bool(email))
+        self.password_changed.setText("Последняя смена пароля: " + date_text(riot.get("password_changed")) +
+                                       (" · Riot, UTC" if riot.get("password_changed") else ""))
+        unavailable = riot.get("unavailable_sections", [])
+        factors = riot.get("mfa_factors")
+        self.mfa_status.setText("Сохранённые сведения · обновление недоступно" if "mfa" in unavailable and factors is not None else
+                               "Riot · настройки 2FA" if factors is not None else "Riot не предоставил настройки 2FA")
+        factor_names = {"email": "Код на почту", "sms": "SMS", "riotmobile": "Riot Mobile",
+                        "riot_app": "Riot Mobile", "thirdparty": "Приложение-аутентификатор"}
+        states = {"enabled": "Включено", "disabled": "Выключено", "action_required": "Нужно действие", "issue": "Ошибка"}
+        entries = [(factor_names.get(f["factor"], f["factor"]),
+                    states.get(f["status"], "Неизвестно") + (" · требуется Riot" if f.get("required") else ""))
+                   for f in factors or []]
+        if factors == []:
+            entries.append(("Способы 2FA", "Список пуст"))
+        self._fill_rows(self.mfa_box, entries)
+        names = {"google": "Google", "apple": "Apple", "facebook": "Facebook", "xbox": "Xbox",
+                 "playstation": "PlayStation", "nintendo": "Nintendo", "discord": "Discord",
+                 "gamecenter": "Game Center", "okta": "Okta"}
+        providers = riot.get("connected_accounts")
+        self.providers.setText(" · ".join(names.get(p, p) for p in providers) if providers else
+                               "Других привязок нет" if providers == [] else "Riot не предоставил сведения")
+        game_pass = riot.get("game_pass")
+        self.game_pass.setText("Xbox Game Pass: " + {"ACTIVE": "активен", "PENDING": "проверяется", "NONE": "не активен"}.get(game_pass, "неизвестно") +
+                               (" · сохранено" if "game_pass" in unavailable and game_pass else ""))
+        apps = riot.get("authorized_apps")
+        self.apps_status.setText("Сохранённые сведения · обновление недоступно" if "apps" in unavailable and apps is not None else
+                                "Нет подключённых приложений" if apps == [] else
+                                "Riot · доступ выдан приложениям ниже" if apps else "Riot не предоставил список")
+        self._fill_rows(self.apps_box, [(a["name"], "С " + date_text(a["connected_at"]) if a.get("connected_at") else "Доступ разрешён")
+                                       for a in apps or []])
+        def toggle_text(key):
+            value = riot.get(key)
+            return "Включены" if value is True else "Выключены" if value is False else "Неизвестно"
+        self.subscriptions.setText("Новости Riot: " + toggle_text("riot_news") + "\nПредложения партнёров: " + toggle_text("partner_offers") +
+                                   ("\nСохранённые сведения · обновление недоступно" if "privacy" in unavailable else ""))
+
     def render(self, *_):
         record = self.manager.get(self.account)
         riot, manual = record.get("riot", {}), record.get("manual", {})
@@ -196,6 +322,13 @@ class AccountDetailsDialog(QDialog):
         self.values["registration_country"].setText(country_text(manual.get("registration_country")))
         self.sources["registration_country"].setText("Указано вручную" if manual.get("registration_country") else "Нет доступных данных")
         self.country.setText("Текущая страна аккаунта: " + country_text(riot.get("current_country")))
+        identity = []
+        for key, caption in (("account_riot_id", "Riot ID"), ("account_login", "Логин Riot"),
+                              ("account_region", "Регион аккаунта"), ("locale", "Язык аккаунта")):
+            if riot.get(key):
+                identity.append(caption + ": " + riot[key])
+        self.identity.setText("\n".join(identity))
+        self._render_settings(riot)
         key = account_key(self.account)
         busy = bool(self.manager.jobs)
         self.refresh.setEnabled(not busy and bool(self.account.get("puuid")))

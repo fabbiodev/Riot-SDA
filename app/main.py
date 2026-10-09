@@ -58,6 +58,16 @@ def main():
             protected_sessions = False
         from app.version import __version__
         from PyQt6.QtGui import QFont, QFontInfo
+        from app.core.sessions import SessionManager
+        from app.core.session_store import MemorySessionStore
+        from app.core.account_details import AccountDetailsManager, MemoryDetailsStore
+        from app.ui.account_details_dialog import AccountDetailsDialog
+        check_sessions = SessionManager(store=MemorySessionStore(), autostart=False)
+        check_details = AccountDetailsManager(check_sessions, enabled=False, store=MemoryDetailsStore())
+        check_account = {"name": "UI check#TEST", "puuid": "synthetic-ui-check"}
+        check_details.set_accounts([check_account])
+        check_details.put_login(check_account, {"email": "synthetic@example.invalid", "email_verified": True})
+        check_dialog = AccountDetailsDialog(check_account, check_details)
         summary = {"ok": "Inter" in app.font().family(), "font": app.font().family(),
                    "version": __version__,
                    "font_actual": QFontInfo(app.font()).family(),
@@ -73,11 +83,16 @@ def main():
                    "session_ui": bool(dashboard.session_label), "session_dpapi": protected_sessions,
                    "client_switch_ui": bool(dashboard.launch_button),
                    "account_details_ui": bool(dashboard.details_button),
+                   "account_settings_tabs": check_dialog.tabs.count() == 3,
+                   "email_default_masked": "synthetic@" not in check_dialog.email_value.text(),
                    "rank_assets": all(not QPixmap(resource_path(f"app/assets/ranks/{product}-{tier}.png")).isNull()
                                       for product in ("lol", "tft") for tier in TIERS),
                    "tls": QSslSocket.supportsSsl()}
         summary["ok"] = summary["ok"] and all(summary[field] for field in (
-            "font_antialias", "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "client_switch_ui", "account_details_ui", "tls"))
+            "font_antialias", "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "client_switch_ui", "account_details_ui", "account_settings_tabs", "email_default_masked", "tls"))
+        check_dialog.reject()
+        check_details.stop()
+        check_sessions.stop()
         Path(sys.argv[index + 1]).write_text(json.dumps(summary), encoding="utf-8")
         return
     app.setQuitOnLastWindowClosed(False)
