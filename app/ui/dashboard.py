@@ -147,7 +147,7 @@ class Dashboard(QWidget):
 
         self.detail = QWidget()
         main = QVBoxLayout(self.detail)
-        main.setContentsMargins(28, 18, 28, 12)
+        main.setContentsMargins(28, 16, 28, 12)
         main.setSpacing(8)
         profile_header = QHBoxLayout()
         identity = QVBoxLayout()

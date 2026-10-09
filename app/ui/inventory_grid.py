@@ -75,6 +75,7 @@ class InventoryDelegate(QStyledItemDelegate):
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         painter.save()
         painter.setRenderHint(painter.RenderHint.Antialiasing)
+        painter.setRenderHint(painter.RenderHint.TextAntialiasing)
         painter.setBrush(QColor("#292327" if selected else "#24272c" if hovered else "#1c1f22"))
         painter.setPen(QPen(QColor("#b8767e" if selected else "#515861" if hovered else "#30353a"), 1))
         painter.drawRoundedRect(rect.adjusted(.5, .5, -.5, -.5), 12, 12)

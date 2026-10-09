@@ -9,7 +9,7 @@
 Приложение для Windows с поддержкой League of Legends и VALORANT.
 
 [![Windows](https://img.shields.io/badge/Windows-10%20%2F%2011-24272b?style=flat-square)](#getting-started)
-[![Version](https://img.shields.io/badge/version-2.1.5-e88992?style=flat-square)](app/version.py)
+[![Version](https://img.shields.io/badge/version-1.0.0-e88992?style=flat-square)](https://github.com/fabbiodev/Riot-SDA/releases/tag/v1.0.0)
 [![Python](https://img.shields.io/badge/Python-3.11-3776ab?style=flat-square&logo=python&logoColor=white)](requirements.txt)
 [![PyQt6](https://img.shields.io/badge/UI-PyQt6-41cd52?style=flat-square)](app/ui)
 [![License: MIT](https://img.shields.io/badge/license-MIT-24272b?style=flat-square)](LICENSE)
@@ -56,8 +56,13 @@
 
 ## Установка
 
-Для запуска из исходников нужны **Windows**, **Git** и **Python 3.11**.
-Готовая сборка пока не опубликована в Releases этого репозитория.
+Скачайте [Riot SDA 1.0 для Windows](https://github.com/fabbiodev/Riot-SDA/releases/tag/v1.0.0).
+`Riot2FA-Setup.exe` устанавливает приложение и создаёт ярлыки.
+`Riot2FA.exe` — отдельная переносимая сборка.
+
+### Из исходников
+
+Нужны **Windows**, **Git** и **Python 3.11**.
 
 ```powershell
 git clone https://github.com/fabbiodev/Riot-SDA.git

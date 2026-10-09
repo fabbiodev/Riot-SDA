@@ -4,7 +4,30 @@ All notable changes to this project are documented here. The section whose
 heading matches a release tag (e.g. `## v2.1.1`) is used as that release's notes,
 with GitHub's auto-generated commit list appended below it.
 
-## v2.1.5
+## v1.0.0
+
+Первый релиз Riot SDA.
+
+### Добавлено
+- Профили League of Legends и VALORANT с регионом, уровнем и поиском по Riot ID / логину.
+- Сетка чемпионов, агентов и скинов с изображениями, поиском и компактным режимом.
+- Эмблемы рангов Solo / Duo, Flex и TFT Ranked в профиле и на карточках аккаунтов.
+- Обновление рангов при запуске, после входа и каждый час: OP.GG для Solo / Flex, Riot TFT API для TFT.
+- Сохранение QR-сессий через Windows DPAPI, показ времени токена и автоматическое продление, пока его разрешает Riot.
+
+### Исправлено
+- Настроен DirectWrite для Inter Variable, включено сглаживание текста в профиле и карточках.
+- Отступы минимального окна скорректированы под новые метрики шрифта.
+
+### Установка
+- `Riot2FA-Setup.exe` — установщик Windows с ярлыками.
+- `Riot2FA.exe` — переносимая сборка; первый запуск включает распаковку зависимостей.
+- Файлы `.sha256` содержат контрольные суммы соответствующих сборок.
+
+Личная коллекция загружается из клиента игры. Для TFT Ranked нужен ключ TFT API.
+Срок сессии определяет Riot; после её отзыва нужен повторный вход.
+
+## v2.1.5 (история исходного проекта)
 
 ### Fixed
 - Fresh push registration now sends the Android app identity required by the

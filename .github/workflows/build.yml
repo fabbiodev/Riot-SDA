@@ -17,7 +17,7 @@ on:
       obfuscate:
         description: "Obfuscate with PyArmor (fewer AV false positives)"
         type: boolean
-        default: true
+        default: false
 
 concurrency:
   group: build-${{ github.ref }}
@@ -47,17 +47,37 @@ jobs:
       - name: Install Patchright Chromium
         run: python -m patchright install chromium
 
-      - name: Test updater
+      - name: Run tests
         run: python -m unittest discover -s tests -v
 
       - name: Build
         shell: pwsh
         run: |
-          if ('${{ github.event.inputs.obfuscate }}' -eq 'false') {
-            python build/build.py --no-obfuscate
-          } else {
+          if ('${{ github.event.inputs.obfuscate }}' -eq 'true') {
             python build/build.py
+          } else {
+            python build/build.py --no-obfuscate
           }
+
+      - name: Smoke test packaged UI and fonts
+        shell: pwsh
+        run: |
+          $env:QT_QPA_PLATFORM = 'windows:fontengine=directwrite'
+          foreach ($scale in @('1', '1.25', '1.5')) {
+            $env:QT_SCALE_FACTOR = $scale
+            $report = Join-Path $env:RUNNER_TEMP "riot-sda-ui-$scale.json"
+            $exe = (Resolve-Path 'dist/Riot2FA/Riot2FA.exe').Path
+            $check = Start-Process -FilePath $exe -ArgumentList @('--check-ui', "`"$report`"") -Wait -PassThru -WindowStyle Hidden
+            if ($check.ExitCode -ne 0) { throw "UI check exited with $($check.ExitCode)" }
+            $result = Get-Content -LiteralPath $report -Raw | ConvertFrom-Json
+            if (-not $result.ok -or -not $result.font_antialias -or $result.font_actual -notlike '*Inter*') {
+              throw "Packaged font/UI check failed at scale $scale"
+            }
+            $expected = (python -c "from app.version import __version__; print(__version__)").Trim()
+            if ($result.version -ne $expected) { throw 'Packaged app version does not match source' }
+            Write-Host "UI/font check passed: scale=$scale version=$($result.version) font=$($result.font_actual)"
+          }
+          Remove-Item Env:QT_SCALE_FACTOR
 
       - name: Install Inno Setup
         run: choco install innosetup --yes --no-progress

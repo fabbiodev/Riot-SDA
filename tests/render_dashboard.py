@@ -5,22 +5,26 @@ import sys
 import time
 from pathlib import Path
 
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from PyQt6.QtWidgets import QApplication, QLabel
 from PyQt6.QtTest import QTest
-from app.styles import load_font, load_stylesheet
+from app.styles import load_font, load_stylesheet, configure_rendering
 from app.ui.dashboard import Dashboard
 from app.core.search import account_key
 from test_dashboard import fixture_accounts
 
+configure_rendering()
 app = QApplication([])
 app.setStyle("Fusion")
 app.setFont(load_font())
 app.setStyleSheet(load_stylesheet())
 dashboard = Dashboard(load_artwork="--live-artwork" in sys.argv)
+if "--hidden" in sys.argv:
+    from PyQt6.QtCore import Qt
+    dashboard.setAttribute(Qt.WidgetAttribute.WA_DontShowOnScreen)
 dashboard.resize(1080, 820)
 dashboard.hidden_codes = True
 preview_accounts = fixture_accounts()

@@ -5,7 +5,7 @@ import os
 
 from PyQt6.QtCore import Qt, QSize, QRect
 from PyQt6.QtGui import QPixmap, QPainter, QColor, QPainterPath, QFont
-from PyQt6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
+from PyQt6.QtWidgets import QApplication, QStyledItemDelegate, QStyleOptionViewItem, QStyle
 
 from app.api.rankings import TIERS
 from app.core.paths import resource_path
@@ -21,6 +21,7 @@ def rank_pixmap(queue, tier, status, size):
     output.fill(Qt.GlobalColor.transparent)
     painter = QPainter(output)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
     if not image.isNull():
         scaled = image.scaled(size * 2, size * 2, Qt.AspectRatioMode.KeepAspectRatio,
                               Qt.TransformationMode.SmoothTransformation)
@@ -38,7 +39,7 @@ def rank_pixmap(queue, tier, status, size):
         shield.quadTo(size * .6, size * 1.5, size * .55, size * 1.15)
         shield.closeSubpath()
         painter.drawPath(shield)
-        font = QFont("Inter")
+        font = QFont(QApplication.font())
         font.setPixelSize(size // 2)
         painter.setFont(font)
         painter.drawText(output.rect(), Qt.AlignmentFlag.AlignCenter,
@@ -60,6 +61,7 @@ class AccountDelegate(QStyledItemDelegate):
         style = option.widget.style()
         style.drawControl(QStyle.ControlElement.CE_ItemViewItem, styled, painter, option.widget)
         painter.save()
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing)
         painter.setClipRect(option.rect)
         left, width = option.rect.x() + 11, option.rect.width() - 22
         top = option.rect.y() + 16

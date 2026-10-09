@@ -5,7 +5,7 @@ import json
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon, QPixmap
 
-from app.styles import load_stylesheet, load_font
+from app.styles import load_stylesheet, load_font, configure_rendering
 from app.core.paths import resource_path
 from app.core import debug_log
 from app.ui import MainWindow
@@ -36,6 +36,7 @@ def main():
             "Riot2FA v%s starting (debug logging active) -> %s", __version__, log_path
         )
     _set_app_id()
+    configure_rendering()
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
     app.setFont(load_font())
@@ -54,7 +55,13 @@ def main():
             protected_sessions = _dpapi(_dpapi(b"synthetic-ui-self-check"), decrypt=True) == b"synthetic-ui-self-check"
         except VaultError:
             protected_sessions = False
+        from app.version import __version__
+        from PyQt6.QtGui import QFont, QFontInfo
         summary = {"ok": "Inter" in app.font().family(), "font": app.font().family(),
+                   "version": __version__,
+                   "font_actual": QFontInfo(app.font()).family(),
+                   "dpi_scale": app.primaryScreen().devicePixelRatio(),
+                   "font_antialias": bool(app.font().styleStrategy() & QFont.StyleStrategy.PreferAntialias),
                    "account_search": bool(dashboard.account_search),
                    "inventory_search": bool(dashboard.inventory_search),
                    "artwork_delegate": bool(dashboard.inventory_grid.itemDelegate()),
@@ -65,7 +72,7 @@ def main():
                                       for product in ("lol", "tft") for tier in TIERS),
                    "tls": QSslSocket.supportsSsl()}
         summary["ok"] = summary["ok"] and all(summary[field] for field in (
-            "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "tls"))
+            "font_antialias", "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "tls"))
         Path(sys.argv[index + 1]).write_text(json.dumps(summary), encoding="utf-8")
         return
     app.setQuitOnLastWindowClosed(False)

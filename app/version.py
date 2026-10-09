@@ -1,2 +1,2 @@
-__version__ = "2.1.5"
+__version__ = "1.0.0"
 GITHUB_REPO = "fabbiodev/Riot-SDA"
