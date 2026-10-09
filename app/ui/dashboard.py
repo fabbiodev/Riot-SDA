@@ -95,6 +95,8 @@ class Dashboard(QWidget):
         self.catalogs = {}
         self.skin_types = {game: load_skin_types(game).get("skins", {}) for game in ("lol", "valorant")}
         self.session_info = {}
+        self.client_session_info = {}
+        self.client_session_busy = False
         self._view_key = None
         self.settings = QSettings("RiotAuthLocal", "Desktop")
         self.hidden_codes = self.settings.value("hidden_codes", True, type=bool)
@@ -161,6 +163,9 @@ class Dashboard(QWidget):
         self.login_label = plain_label("", "mutedLabel")
         identity.addWidget(self.login_label)
         profile_header.addLayout(identity, 1)
+        self.launch_button = self._action_button("Riot Client", "client-launch")
+        self.launch_button.setToolTip("Запустить Riot Client с выбранным аккаунтом без QR")
+        profile_header.addWidget(self.launch_button)
         self.qr_button = self._action_button("Вход по QR", "qr")
         profile_header.addWidget(self.qr_button)
         self.menu_button = QPushButton("···")
@@ -168,6 +173,8 @@ class Dashboard(QWidget):
         self.menu_button.setObjectName("accountMenu")
         self.menu_button.setFixedWidth(36)
         menu = QMenu(self.menu_button)
+        menu.addAction("Обновить вход для Riot Client…", lambda: self.action_requested.emit("client-login"))
+        menu.addSeparator()
         self.session_refresh_action = menu.addAction("Обновить QR-сессию", lambda: self.action_requested.emit("session-refresh"))
         self.session_login_action = menu.addAction("Войти заново для QR…", lambda: self.action_requested.emit("session-login"))
         self.session_forget_action = menu.addAction("Забыть QR-сессию", lambda: self.action_requested.emit("session-forget"))
@@ -506,6 +513,7 @@ class Dashboard(QWidget):
         self.status.style().unpolish(self.status)
         self.status.style().polish(self.status)
         self.rows = (catalog if catalog_mode else p).get(self.collection, [])
+        self.update_client_status()
         updated = (catalog.get("updated_at") if catalog_mode else p.get("collection_updated_at")) or p.get("profile_updated_at")
         self.updated_label.setText(time.strftime("Обновлено %d.%m %H:%M", time.localtime(updated)) if updated else "")
         self._render_grid()
@@ -514,6 +522,14 @@ class Dashboard(QWidget):
         if self._view_key is not None and view_key != self._view_key:
             self._content_fade.start()
         self._view_key = view_key
+
+    def update_client_status(self):
+        account = self.current_account
+        status = self.client_session_info.get(self.selected_key, {})
+        self.launch_button.setToolTip("Запустить Riot Client с выбранным аккаунтом без QR\n" +
+                                      status.get("text", "Сессия создаётся из сохранённого входа Riot SDA"))
+        self.launch_button.setEnabled(bool(account and account.get("puuid")) and not self.client_session_busy)
+        self.launch_button.setText("Запуск…" if status.get("status") == "switching" else "Riot Client")
 
     def _render_grid(self):
         query = self.inventory_search.text()

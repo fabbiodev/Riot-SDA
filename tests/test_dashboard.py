@@ -56,6 +56,7 @@ class DashboardTests(unittest.TestCase):
 
     def setUp(self):
         self.widget = Dashboard(load_artwork=False)
+        self.widget.compact = False  # Do not inherit the workstation's live UI preference.
         self.widget.resize(1080, 820)
         self.widget.set_accounts(fixture_accounts())
         self.widget.show()

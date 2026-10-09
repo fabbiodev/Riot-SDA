@@ -6,3 +6,4 @@ aiohttp>=3.9.3
 opencv-python
 numpy
 psutil
+PyYAML>=6.0.3

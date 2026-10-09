@@ -71,11 +71,12 @@ def main():
                    "inventory_grid": dashboard.inventory_grid.viewMode() == dashboard.inventory_grid.ViewMode.IconMode,
                    "rank_cards": sorted(dashboard.rank_values),
                    "session_ui": bool(dashboard.session_label), "session_dpapi": protected_sessions,
+                   "client_switch_ui": bool(dashboard.launch_button),
                    "rank_assets": all(not QPixmap(resource_path(f"app/assets/ranks/{product}-{tier}.png")).isNull()
                                       for product in ("lol", "tft") for tier in TIERS),
                    "tls": QSslSocket.supportsSsl()}
         summary["ok"] = summary["ok"] and all(summary[field] for field in (
-            "font_antialias", "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "tls"))
+            "font_antialias", "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "client_switch_ui", "tls"))
         Path(sys.argv[index + 1]).write_text(json.dumps(summary), encoding="utf-8")
         return
     app.setQuitOnLastWindowClosed(False)

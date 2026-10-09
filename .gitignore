@@ -41,6 +41,10 @@ build/pyarmor.log
 !.env.example
 accounts.json
 qr-sessions.dpapi
+client-sessions.dpapi
+client-switch-recovery.dpapi
+RiotGamesPrivateSettings.yaml
+RiotClientPrivateSettings.yaml
 *.log
 /START-HERE.ru.md
 

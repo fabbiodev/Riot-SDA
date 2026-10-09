@@ -54,6 +54,7 @@ from app.core.debug_log import mask
 from app.core.search import account_key
 from app.core.sessions import SessionManager
 from app.core.session_store import MemorySessionStore
+from app.core.client_sessions import ClientSessionManager
 from app.api.developer_api import DeveloperApi, DataError
 from app.api.game_clients import fetch_collection
 from app.api.rankings import merge_rankings, rank_region
@@ -115,6 +116,12 @@ class MainWindow(QMainWindow):
         QApplication.instance().aboutToQuit.connect(self.sessions.stop)
         self.toast = Toast(self.dashboard)
 
+        self.client_sessions = ClientSessionManager(self.sessions, self, enabled=start_services)
+        self.client_sessions.changed.connect(self._update_client_status)
+        self.client_sessions.failed.connect(lambda message: QMessageBox.warning(self, "Riot Client", message))
+        self.client_sessions.launched.connect(lambda key: self.toast.popup("Riot Client открыт с выбранным аккаунтом"))
+        QApplication.instance().aboutToQuit.connect(self.client_sessions.stop)
+
         self._populate()
         if start_services:
             QTimer.singleShot(0, self.sessions.poll)
@@ -174,6 +181,10 @@ class MainWindow(QMainWindow):
         if action == "connect-2fa":
             if not account.get("seed"):
                 self._add_via_login(connect_2fa=True, target=copy.deepcopy(account))
+        elif action == "client-launch":
+            self.client_sessions.launch(account)
+        elif action == "client-login":
+            self._add_via_login(target=copy.deepcopy(account), refresh_session=True)
         elif action == "session-refresh":
             key = account_key(account)
             if key not in self.sessions.sessions or self.sessions.sessions[key].get("status") in ("login", "forgotten", "token_only"):
@@ -535,6 +546,13 @@ class MainWindow(QMainWindow):
         self.sessions.sync_accounts(self.accounts)
         self._update_session_status()
         self.dashboard.set_accounts(self.accounts)
+        self.client_sessions.set_accounts(self.accounts)
+        self._update_client_status()
+
+    def _update_client_status(self):
+        self.dashboard.client_session_info = dict(self.client_sessions.info)
+        self.dashboard.client_session_busy = self.client_sessions.busy
+        self.dashboard.update_client_status()
 
     def _update_session_status(self):
         self.dashboard.session_info = self.sessions.public_status()
