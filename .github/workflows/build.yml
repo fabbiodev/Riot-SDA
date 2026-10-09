@@ -73,6 +73,9 @@ jobs:
             if (-not $result.ok -or -not $result.font_antialias -or $result.font_actual -notlike '*Inter*') {
               throw "Packaged font/UI check failed at scale $scale"
             }
+            if ($result.dpi_scale -ne 1 -or ($result.ui_size_pixels -join 'x') -ne '1080x820') {
+              throw "Windows scaling changed the UI's physical size at scale $scale"
+            }
             $expected = (python -c "from app.version import __version__; print(__version__)").Trim()
             if ($result.version -ne $expected) { throw 'Packaged app version does not match source' }
             Write-Host "UI/font check passed: scale=$scale version=$($result.version) font=$($result.font_actual)"

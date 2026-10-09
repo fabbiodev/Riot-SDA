@@ -4,6 +4,12 @@ All notable changes to this project are documented here. The section whose
 heading matches a release tag (e.g. `## v2.1.1`) is used as that release's notes,
 with GitHub's auto-generated commit list appended below it.
 
+## В разработке — 1.0.1
+
+- Добавлены метки редкости скинов LoL и категорий издания VALORANT в сетке и подробностях.
+- Поиск учитывает тип скина. Публичные справочники дополняют уже сохранённые коллекции и кэшируются на сутки.
+- Размеры интерфейса и текста зафиксированы в физических пикселях независимо от масштаба Windows; ручное изменение окна сохранено.
+
 ## v1.0.0
 
 Первый релиз Riot SDA.

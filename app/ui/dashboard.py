@@ -14,6 +14,7 @@ from app.api.developer_api import LOL_PLATFORMS, VAL_PLATFORMS
 from app.api.rankings import rank_text, rank_region
 from app.core import get_code, PERIOD
 from app.core.search import account_key, account_matches, item_matches
+from app.core.skin_types import load_skin_types, enrich_skin
 from app.core.sessions import remaining_text, timestamp
 from app.ui.motion import AnimatedButton as QPushButton, ContentFade, SmoothScroll
 from app.ui.artwork import ArtworkStore, ArtworkPreview
@@ -92,6 +93,7 @@ class Dashboard(QWidget):
         self.busy = set()
         self.errors = {}
         self.catalogs = {}
+        self.skin_types = {game: load_skin_types(game).get("skins", {}) for game in ("lol", "valorant")}
         self.session_info = {}
         self._view_key = None
         self.settings = QSettings("RiotAuthLocal", "Desktop")
@@ -515,8 +517,9 @@ class Dashboard(QWidget):
 
     def _render_grid(self):
         query = self.inventory_search.text()
-        filtered = [r for r in self.rows if item_matches(r, query)]
         is_character = self.collection == "characters"
+        rows = self.rows if is_character else [enrich_skin(row, self.skin_types[self.game]) for row in self.rows]
+        filtered = [r for r in rows if item_matches(r, query)]
         catalog_mode = self.mode.currentData() == "catalog"
         grid = self.inventory_grid
         context = (self.selected_key, self.game, self.collection, catalog_mode, query)
@@ -538,7 +541,8 @@ class Dashboard(QWidget):
             item.setData(Qt.ItemDataRole.UserRole, row)
             item.setData(Qt.ItemDataRole.UserRole + 1, {"game": self.game, "collection": self.collection,
                                                       "subtitle": subtitle})
-            item.setToolTip("\n".join(str(x) for x in [row.get("name", ""), subtitle, *row.get("aliases", [])] if x))
+            item.setToolTip("\n".join(str(x) for x in [row.get("name", ""), subtitle,
+                row.get("skin_type", ""), *row.get("aliases", [])] if x))
             grid.addItem(item)
             if selected_id is not None and row.get("id") == selected_id:
                 grid.setCurrentItem(item)
@@ -575,6 +579,8 @@ class Dashboard(QWidget):
             details = [row.get("role", ""), "Агент открыт"]
         else:
             details = [row.get("owner", ""), *row.get("variants", [])]
+        if self.collection == "skins":
+            details.insert(0, f"Тип: {row.get('skin_type', 'Тип не указан')}")
         values = QListWidget()
         values.addItems([str(x) for x in details if x])
         layout.addWidget(values)

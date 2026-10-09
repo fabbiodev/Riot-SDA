@@ -20,6 +20,7 @@ from urllib3.exceptions import InsecureRequestWarning
 
 from app.api.developer_api import DataError
 from app.core.storage import APPDATA_DIR
+from app.core.skin_types import league_skin_type
 
 AGENTS_TYPE = "01bb38e1-da47-4e6a-9b3d-945fe4655707"
 SKINS_TYPE = "e7c63390-eda7-46e0-bb7a-a6abdacd2433"
@@ -128,6 +129,7 @@ def league_collection(account, client=None):
                 continue
             row = {"id": str(skin["id"]), "name": skin.get("name") or str(skin["id"]),
                    "owner": owner_name, "owner_id": str(cid), "aliases": aliases, "kind": "owned"}
+            row.update(league_skin_type(skin.get("rarity")))
             skins.append(row)
             owned_skins.append(row["id"])
         if _owned(champion):
@@ -214,6 +216,7 @@ def normalize_val_catalog(agents_en, weapons_en, agents_ru, weapons_ru):
             row = {"id": skin["uuid"], "name": local_skin["displayName"],
                    "aliases": [skin["displayName"], weapon["displayName"]],
                    "owner": local_weapon["displayName"],
+                   "skin_type_id": skin.get("contentTierUuid"),
                    "base": skin["displayName"].startswith("Standard ")}
             for level in skin.get("levels", []):
                 levels[level["uuid"]] = row

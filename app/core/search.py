@@ -28,4 +28,5 @@ def account_matches(account, query):
 
 def item_matches(item, query):
     return matches(query, item.get("name"), item.get("owner"),
+                   item.get("skin_type"), *item.get("skin_type_aliases", []),
                    *item.get("aliases", []))

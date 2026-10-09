@@ -59,6 +59,7 @@ from app.api.game_clients import fetch_collection
 from app.api.rankings import merge_rankings, rank_region
 from app.api.opgg import fetch_auto_rankings
 from app.core.catalog import load_catalog, save_catalog, league_catalog
+from app.core.skin_types import fetch_skin_types
 from app.ui.dashboard import Dashboard, DataSettingsDialog
 
 ICON_PATH = resource_path(os.path.join("images", "icon.ico"))
@@ -76,6 +77,7 @@ class MainWindow(QMainWindow):
     _update_ready = pyqtSignal(str)
     _update_error = pyqtSignal(str)
     _game_data_result = pyqtSignal(dict)
+    _skin_type_result = pyqtSignal(str, dict)
 
     def __init__(self, accounts=None, start_services=True):
         super().__init__()
@@ -91,6 +93,9 @@ class MainWindow(QMainWindow):
                          "tft": os.getenv("RIOT_TFT_API_KEY", ""),
                          "valorant": os.getenv("RIOT_VALORANT_API_KEY", "")}
         self._data_jobs = set()
+        self._skin_type_jobs = set()
+        self._skin_types_auto_enabled = start_services
+        self._skin_type_result.connect(self._on_skin_types)
         self._rank_auto_enabled = start_services
         self._rank_pending = set()
         self._rank_running = set()
@@ -141,6 +146,7 @@ class MainWindow(QMainWindow):
         self.rank_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.rank_timer.setInterval(60 * 60 * 1000)
         self.rank_timer.timeout.connect(self._queue_rank_refresh)
+        self.rank_timer.timeout.connect(self._refresh_skin_types)
         self.rank_queue_timer = QTimer(self)
         self.rank_queue_timer.setInterval(2000)
         self.rank_queue_timer.timeout.connect(self._drain_rank_queue)
@@ -149,6 +155,7 @@ class MainWindow(QMainWindow):
             self.rank_timer.start()
             self.rank_queue_timer.start()
             QTimer.singleShot(0, self._queue_rank_refresh)
+            QTimer.singleShot(0, self._refresh_skin_types)
         # This local fork must not replace itself with upstream's original UI.
         # Updater functionality is retained but no automatic upstream install is offered.
 
@@ -263,6 +270,32 @@ class MainWindow(QMainWindow):
         self.rank_timer.stop()
         self.rank_queue_timer.stop()
 
+    def _refresh_skin_types(self, game=None):
+        if not self._skin_types_auto_enabled or self._rank_stopped:
+            return
+        for current in ((game,) if game else ("lol", "valorant")):
+            if current not in self._skin_type_jobs:
+                self._skin_type_jobs.add(current)
+                threading.Thread(target=self._skin_types_worker, args=(current,), daemon=True).start()
+
+    def _skin_types_worker(self, game):
+        try:
+            data = fetch_skin_types(game)
+        except DataError:
+            data = {}
+        try:
+            self._skin_type_result.emit(game, data)
+        except RuntimeError:
+            pass  # Window was destroyed while the public request was in flight.
+
+    def _on_skin_types(self, game, data):
+        self._skin_type_jobs.discard(game)
+        if self._rank_stopped or not data.get("skins"):
+            return
+        self.dashboard.skin_types[game] = data["skins"]
+        if self.dashboard.game == game:
+            self.dashboard._render_grid()
+
     def _refresh_game_data(self, operation):
         account = self.dashboard.current_account
         if not account:
@@ -283,6 +316,7 @@ class MainWindow(QMainWindow):
             if not self._data_settings():
                 return
         region = rank_region(account) if game == "lol" else account.get("api_routes", {}).get(game, "EU")
+        self._refresh_skin_types(game)
         self._start_game_data(account, game, operation, region)
 
     def _start_game_data(self, account, game, operation, region):

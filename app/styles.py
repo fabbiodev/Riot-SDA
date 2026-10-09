@@ -9,6 +9,13 @@ def configure_rendering():
     # Keep explicit platform choices (including offscreen UI checks) intact.
     if sys.platform == "win32":
         os.environ.setdefault("QT_QPA_PLATFORM", "windows:fontengine=directwrite")
+        # Keep UI geometry in physical pixels while Windows stays DPI-aware.
+        # DPI-unaware windows would instead be bitmap-stretched by Windows.
+        os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
+        os.environ["QT_SCALE_FACTOR"] = "1"
+        os.environ.pop("QT_SCREEN_SCALE_FACTORS", None)
+        from PyQt6.QtCore import QCoreApplication, Qt
+        QCoreApplication.setAttribute(Qt.ApplicationAttribute.AA_Use96Dpi)
 
 
 def load_font():

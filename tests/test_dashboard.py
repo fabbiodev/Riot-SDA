@@ -423,6 +423,34 @@ class DashboardTests(unittest.TestCase):
         self.widget.mode.setCurrentIndex(1)
         self.assertIn("Каталог", grid.item(0).data(Qt.ItemDataRole.UserRole + 1)["subtitle"])
 
+    def test_skin_type_is_visible_in_grid_and_search_without_changing_ownership(self):
+        self.widget.skin_types["lol"] = {"103027": {"skin_type": "Легендарный", "skin_type_aliases": ["Legendary"]}}
+        self.widget.set_collection("skins")
+        self.widget.inventory_search.setText("легендарный")
+        self.assertEqual(self.widget.inventory_grid.count(), 1)
+        item = self.widget.inventory_grid.item(0)
+        self.assertEqual(item.data(Qt.ItemDataRole.UserRole)["skin_type"], "Легендарный")
+        self.assertIn("Легендарный", item.toolTip())
+        self.assertEqual(item.data(Qt.ItemDataRole.UserRole)["kind"], "owned")
+        self.assertNotIn("skin_type", self.widget.current_account["games"]["lol"]["skins"][0])
+
+    def test_background_types_deduplicate_and_refresh_existing_skin_cards(self):
+        win = MainWindow(accounts=fixture_accounts(), start_services=False)
+        self.addCleanup(win.deleteLater)
+        self.addCleanup(win.timer.stop)
+        win._skin_types_auto_enabled = True
+        win.dashboard.set_collection("skins")
+        with patch("app.ui.main_window.threading.Thread") as thread:
+            win._refresh_skin_types("lol")
+            win._refresh_skin_types("lol")
+            self.assertEqual(thread.call_count, 1)
+            win._on_skin_types("lol", {"skins": {"103027": {"skin_type": "Легендарный"}}})
+            self.assertEqual(win.dashboard.inventory_grid.item(0).data(Qt.ItemDataRole.UserRole)["skin_type"], "Легендарный")
+            self.assertEqual(win._skin_type_jobs, set())
+            win._on_skin_types("lol", {})
+            self.assertEqual(win.dashboard.skin_types["lol"]["103027"]["skin_type"], "Легендарный")
+            self.assertEqual(win._data_jobs, set())
+
     def test_async_result_does_not_change_selected_account_or_auth_puuid(self):
         with patch("app.ui.main_window.FcmService"), patch("app.ui.main_window.save_accounts") as save:
             win = MainWindow(accounts=fixture_accounts(), start_services=False)

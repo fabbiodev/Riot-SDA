@@ -50,6 +50,7 @@ def main():
         from pathlib import Path
         index = sys.argv.index("--check-ui")
         dashboard = Dashboard(load_artwork=False)
+        dashboard.resize(1080, 820)
         dashboard.set_accounts([])
         try:
             protected_sessions = _dpapi(_dpapi(b"synthetic-ui-self-check"), decrypt=True) == b"synthetic-ui-self-check"
@@ -61,6 +62,8 @@ def main():
                    "version": __version__,
                    "font_actual": QFontInfo(app.font()).family(),
                    "dpi_scale": app.primaryScreen().devicePixelRatio(),
+                   "ui_size_pixels": [round(dashboard.width() * dashboard.devicePixelRatioF()),
+                                      round(dashboard.height() * dashboard.devicePixelRatioF())],
                    "font_antialias": bool(app.font().styleStrategy() & QFont.StyleStrategy.PreferAntialias),
                    "account_search": bool(dashboard.account_search),
                    "inventory_search": bool(dashboard.inventory_search),

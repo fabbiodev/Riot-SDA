@@ -28,6 +28,8 @@ if "--hidden" in sys.argv:
 dashboard.resize(1080, 820)
 dashboard.hidden_codes = True
 preview_accounts = fixture_accounts()
+preview_accounts[0]["games"]["lol"]["skins"][0]["skin_type"] = "Легендарный"
+preview_accounts[0]["games"]["valorant"]["skins"][0]["skin_type"] = "Premium"
 if "--grid-fixtures" in sys.argv:
     preview_accounts[0]["games"]["lol"]["characters"].extend([
         {"id": identifier, "name": name, "role": role, "kind": "owned", "skin_ids": []}

@@ -44,7 +44,7 @@ class InventoryGrid(QListWidget):
         art_height = (min(90, round((width - 26) / 2.1)) if weapon else
                       (124 if self.compact else 144) if self.collection == "skins" else
                       min(112 if self.compact else 132, max(32, width - 26)))
-        size = QSize(width, art_height + (78 if self.compact else 86))
+        size = QSize(width, art_height + (78 if self.compact else 86) + (20 if self.collection == "skins" else 0))
         if size != self.gridSize():
             self.setGridSize(size)
             self.doItemsLayout()
@@ -63,8 +63,8 @@ class InventoryDelegate(QStyledItemDelegate):
         return self.parent().gridSize()
 
     @staticmethod
-    def artwork_rect(rect, compact):
-        return rect.adjusted(9, 9, -9, -(67 if compact else 75))
+    def artwork_rect(rect, compact, skin=False):
+        return rect.adjusted(9, 9, -9, -(67 if compact else 75) - (20 if skin else 0))
 
     def paint(self, painter, option, index):
         row = index.data(Qt.ItemDataRole.UserRole) or {}
@@ -79,7 +79,8 @@ class InventoryDelegate(QStyledItemDelegate):
         painter.setBrush(QColor("#292327" if selected else "#24272c" if hovered else "#1c1f22"))
         painter.setPen(QPen(QColor("#b8767e" if selected else "#515861" if hovered else "#30353a"), 1))
         painter.drawRoundedRect(rect.adjusted(.5, .5, -.5, -.5), 12, 12)
-        image_rect = self.artwork_rect(rect, compact)
+        is_skin = meta.get("collection") == "skins"
+        image_rect = self.artwork_rect(rect, compact, is_skin)
         pixmap = self.store.thumbnail(meta.get("game", "lol"), meta.get("collection", "characters"),
                                       row, QSize(max(1, int(image_rect.width())), max(1, int(image_rect.height()))))
         painter.drawPixmap(image_rect.topLeft(), pixmap)
@@ -99,6 +100,23 @@ class InventoryDelegate(QStyledItemDelegate):
         subtitle = painter.fontMetrics().elidedText(str(meta.get("subtitle", "")),
                                                     Qt.TextElideMode.ElideRight, int(subtitle_rect.width()))
         painter.drawText(subtitle_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, subtitle)
+        if is_skin:
+            label = str(row.get("skin_type", "Тип не указан"))
+            colors = {"Обычный": "#a0a7af", "Редкий": "#74b9ce", "Эпический": "#b79ce8",
+                      "Легендарный": "#e7ad76", "Мифический": "#d69ad3", "Абсолютный": "#e4ca7a",
+                      "Возвышенный": "#e998a9", "Трансцендентный": "#ed8b7d",
+                      "Select": "#85b6e8", "Deluxe": "#78c8b6", "Premium": "#b89ce6",
+                      "Exclusive": "#e8af7e", "Ultra": "#e4cc7d"}
+            font.setPixelSize(10)
+            painter.setFont(font)
+            type_rect = QRectF(name_rect.left(), rect.bottom() - 44, name_rect.width(), 16)
+            label = painter.fontMetrics().elidedText(label, Qt.TextElideMode.ElideRight, int(type_rect.width()) - 10)
+            pill = QRectF(type_rect.left(), type_rect.top(), min(type_rect.width(), painter.fontMetrics().horizontalAdvance(label) + 10), 16)
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor("#292c31"))
+            painter.drawRoundedRect(pill, 4, 4)
+            painter.setPen(QColor(colors.get(str(row.get("skin_type")), "#a0a7af")))
+            painter.drawText(pill.adjusted(5, 0, -5, 0), Qt.AlignmentFlag.AlignVCenter, label)
         if option.state & QStyle.StateFlag.State_HasFocus:
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.setPen(QPen(QColor("#d4a0a6"), 1))
