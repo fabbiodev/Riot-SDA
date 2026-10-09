@@ -21,7 +21,7 @@ from app.core.search import account_key
 from app.core.sessions import SessionManager
 from app.core.session_store import MemorySessionStore, VaultError
 from app.core.share import export_account, import_account
-from app.ui.account_details_dialog import AccountDetailsDialog
+from app.ui.account_details_dialog import AccountDetailsDialog, country_text
 
 ACCOUNT = {"name": "Example#EUW", "puuid": "synthetic-owner", "local_id": "details-test"}
 USER = {"sub": "synthetic-owner", "birth_date": "1998-04-12", "country": "RU",
@@ -291,6 +291,34 @@ class AccountDetailsUiTests(unittest.TestCase):
         self.assertEqual(dialog.apps_status.text(), "Нет подключённых приложений")
         self.assertIn("не активен", dialog.game_pass.text())
         self.assertIn("Новости Riot: Выключены", dialog.subscriptions.text())
+        dialog.reject()
+
+    def test_repeated_refresh_reuses_rows_and_removed_cards_are_hidden_immediately(self):
+        self.manager.put_login(ACCOUNT, {"authorized_apps": [{"name": "First"}, {"name": "Second"}],
+                                        "mfa_factors": [{"factor": "email", "status": "enabled"}]})
+        dialog = AccountDetailsDialog(ACCOUNT, self.manager)
+        dialog.show()
+        dialog.tabs.setCurrentIndex(2)
+        self.app.processEvents()
+        first = dialog.apps_box.itemAt(0).widget()
+        removed = dialog.apps_box.itemAt(1).widget()
+        for _ in range(10):
+            dialog.render()
+            self.assertIs(dialog.apps_box.itemAt(0).widget(), first)
+            self.assertEqual(dialog.apps_box.count(), 2)
+        self.manager.put_login(ACCOUNT, {"authorized_apps": [{"name": "Updated"}]})
+        self.assertFalse(removed.isVisible())
+        self.assertIsNone(removed.parent())
+        self.assertEqual(first.title_label.text(), "Updated")
+        self.assertEqual(dialog.apps_box.count(), 1)
+        dialog.reject()
+
+    def test_country_codes_are_shown_verbatim(self):
+        for code in ("RUS", "CHN", "ARG", "RU"):
+            self.assertEqual(country_text(code), code)
+        self.manager.put_login(ACCOUNT, {"current_country": "CHN"})
+        dialog = AccountDetailsDialog(ACCOUNT, self.manager)
+        self.assertEqual(dialog.country.text(), "Страна аккаунта (код Riot): CHN")
         dialog.reject()
 
     def test_cached_optional_sections_are_labelled_when_refresh_is_unavailable(self):

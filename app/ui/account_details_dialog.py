@@ -2,10 +2,10 @@
 
 from datetime import date, datetime
 
-from PyQt6.QtCore import Qt, QLocale
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QGridLayout, QFrame,
                              QLabel, QCheckBox, QFormLayout, QLineEdit, QMessageBox, QTabWidget,
-                             QWidget, QScrollArea)
+                             QWidget, QScrollArea, QSizePolicy)
 
 from app.core.account_details import clean_manual
 from app.core.search import account_key
@@ -30,21 +30,6 @@ def date_text(value):
 def country_text(value):
     if not value:
         return "Riot не предоставил"
-    alpha2 = {"RUS": "RU", "USA": "US", "GBR": "GB", "DEU": "DE", "FRA": "FR", "ESP": "ES",
-              "ITA": "IT", "POL": "PL", "UKR": "UA", "BLR": "BY", "KAZ": "KZ", "TUR": "TR",
-              "CAN": "CA", "BRA": "BR", "MEX": "MX", "ARG": "AR", "CHL": "CL", "AUS": "AU",
-              "JPN": "JP", "KOR": "KR", "CHN": "CN", "VNM": "VN", "IND": "IN", "NLD": "NL",
-              "SWE": "SE", "NOR": "NO", "FIN": "FI", "DNK": "DK", "CZE": "CZ", "PRT": "PT"}.get(value, value)
-    if len(alpha2) == 2:
-        territory = QLocale.codeToTerritory(alpha2)
-        if territory != QLocale.Country.AnyCountry:
-            name = {"RU": "Россия", "US": "США", "GB": "Великобритания", "DE": "Германия", "FR": "Франция",
-                    "ES": "Испания", "IT": "Италия", "PL": "Польша", "UA": "Украина", "BY": "Беларусь",
-                    "KZ": "Казахстан", "TR": "Турция", "CA": "Канада", "BR": "Бразилия", "MX": "Мексика",
-                    "AR": "Аргентина", "CL": "Чили", "AU": "Австралия", "JP": "Япония", "KR": "Южная Корея",
-                    "CN": "Китай", "VN": "Вьетнам", "IN": "Индия", "NL": "Нидерланды", "SE": "Швеция",
-                    "NO": "Норвегия", "FI": "Финляндия", "DK": "Дания", "CZ": "Чехия", "PT": "Португалия"}.get(alpha2)
-            return (name or QLocale.territoryToString(territory)) + " · " + value
     return value
 
 
@@ -125,6 +110,7 @@ class AccountDetailsDialog(QDialog):
             box = QVBoxLayout(content)
             box.setContentsMargins(2, 16, 2, 8)
             box.setSpacing(14)
+            box.setAlignment(Qt.AlignmentFlag.AlignTop)
             scroll.setWidget(content)
             self.tabs.addTab(scroll, title)
             self.pages[key] = box
@@ -235,17 +221,32 @@ class AccountDetailsDialog(QDialog):
 
     @staticmethod
     def _fill_rows(box, entries):
-        while box.count():
-            item = box.takeAt(0)
+        # Reuse rows during live refreshes. Deferred deletes can outlive a
+        # nested dialog event loop and leave the previous cards painted on top.
+        while box.count() > len(entries):
+            item = box.takeAt(box.count() - 1)
             if item.widget():
+                item.widget().hide()
+                item.widget().setParent(None)
                 item.widget().deleteLater()
-        for title, detail in entries:
+        for index, (title, detail) in enumerate(entries):
+            if index < box.count():
+                card = box.itemAt(index).widget()
+                card.title_label.setText(title)
+                card.detail_label.setText(detail)
+                continue
             card = QFrame()
             card.setObjectName("personalCard")
+            card.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Maximum)
             row = QHBoxLayout(card)
             row.setContentsMargins(13, 10, 13, 10)
-            row.addWidget(label(title, ""), 1)
-            row.addWidget(label(detail))
+            card.title_label = label(title, "")
+            card.detail_label = label(detail)
+            card.detail_label.setWordWrap(False)
+            card.detail_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            card.detail_label.setMaximumWidth(260)
+            row.addWidget(card.title_label, 1)
+            row.addWidget(card.detail_label)
             box.addWidget(card)
 
     def _render_settings(self, riot):
@@ -321,7 +322,8 @@ class AccountDetailsDialog(QDialog):
         self.show_phone.setVisible(bool(phone))
         self.values["registration_country"].setText(country_text(manual.get("registration_country")))
         self.sources["registration_country"].setText("Указано вручную" if manual.get("registration_country") else "Нет доступных данных")
-        self.country.setText("Текущая страна аккаунта: " + country_text(riot.get("current_country")))
+        self.country.setText("Страна аккаунта (код Riot): " + country_text(riot.get("current_country")))
+        self.country.setToolTip("Код страны из настроек Riot, например RUS, CHN или ARG. Это текущая страна аккаунта.")
         identity = []
         for key, caption in (("account_riot_id", "Riot ID"), ("account_login", "Логин Riot"),
                               ("account_region", "Регион аккаунта"), ("locale", "Язык аккаунта")):

@@ -68,6 +68,16 @@ def main():
         check_details.set_accounts([check_account])
         check_details.put_login(check_account, {"email": "synthetic@example.invalid", "email_verified": True})
         check_dialog = AccountDetailsDialog(check_account, check_details)
+        from app.core.account_archive import archive_bytes, FORMAT
+        import io
+        import pyzipper
+        try:
+            zip_payload = archive_bytes([check_account], password="synthetic-ui-check")
+            with pyzipper.AESZipFile(io.BytesIO(zip_payload)) as zip_check:
+                zip_check.setpassword(b"synthetic-ui-check")
+                zip_aes = json.loads(zip_check.read("accounts.json"))["format"] == FORMAT
+        except Exception:
+            zip_aes = False
         summary = {"ok": "Inter" in app.font().family(), "font": app.font().family(),
                    "version": __version__,
                    "font_actual": QFontInfo(app.font()).family(),
@@ -85,11 +95,12 @@ def main():
                    "account_details_ui": bool(dashboard.details_button),
                    "account_settings_tabs": check_dialog.tabs.count() == 3,
                    "email_default_masked": "synthetic@" not in check_dialog.email_value.text(),
+                   "zip_aes": zip_aes,
                    "rank_assets": all(not QPixmap(resource_path(f"app/assets/ranks/{product}-{tier}.png")).isNull()
                                       for product in ("lol", "tft") for tier in TIERS),
                    "tls": QSslSocket.supportsSsl()}
         summary["ok"] = summary["ok"] and all(summary[field] for field in (
-            "font_antialias", "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "client_switch_ui", "account_details_ui", "account_settings_tabs", "email_default_masked", "tls"))
+            "font_antialias", "account_search", "inventory_search", "artwork_delegate", "inventory_grid", "rank_assets", "session_ui", "session_dpapi", "client_switch_ui", "account_details_ui", "account_settings_tabs", "email_default_masked", "zip_aes", "tls"))
         check_dialog.reject()
         check_details.stop()
         check_sessions.stop()

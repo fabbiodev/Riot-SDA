@@ -7,3 +7,4 @@ opencv-python
 numpy
 psutil
 PyYAML>=6.0.3
+pyzipper==0.4.0

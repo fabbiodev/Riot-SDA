@@ -14,6 +14,7 @@ from app.api.developer_api import LOL_PLATFORMS, VAL_PLATFORMS
 from app.api.rankings import rank_text, rank_region
 from app.core import get_code, PERIOD
 from app.core.search import account_key, account_matches, item_matches
+from app.core.inventory import normalize_collection, unique_items
 from app.core.skin_types import load_skin_types, enrich_skin
 from app.core.sessions import remaining_text, timestamp
 from app.ui.motion import AnimatedButton as QPushButton, ContentFade, SmoothScroll
@@ -144,8 +145,14 @@ class Dashboard(QWidget):
         side.addWidget(self.no_accounts)
         account_actions = QHBoxLayout()
         account_actions.addWidget(self._action_button("Добавить", "add"))
-        account_actions.addWidget(self._action_button("Импорт", "import"))
+        import_button = QPushButton("Импорт")
+        import_menu = QMenu(import_button)
+        import_menu.addAction("Из ZIP…", lambda: self.action_requested.emit("import"))
+        import_menu.addAction("Из кода…", lambda: self.action_requested.emit("import-code"))
+        import_button.setMenu(import_menu)
+        account_actions.addWidget(import_button)
         side.addLayout(account_actions)
+        side.addWidget(self._action_button("Экспорт ZIP…", "export"))
         self.requests_button = self._action_button("Запросы на вход", "requests")
         side.addWidget(self.requests_button)
         side.addWidget(self._action_button("Настройки API", "settings"))
@@ -195,6 +202,7 @@ class Dashboard(QWidget):
         self.session_login_action = menu.addAction("Войти заново для QR…", lambda: self.action_requested.emit("session-login"))
         self.session_forget_action = menu.addAction("Забыть QR-сессию", lambda: self.action_requested.emit("session-forget"))
         menu.addSeparator()
+        self.export_action = menu.addAction("Экспорт аккаунта в ZIP…", lambda: self.action_requested.emit("export-selected"))
         self.connect_action = menu.addAction("Подключить 2FA…", lambda: self.action_requested.emit("connect-2fa"))
         self.share_action = None
         for label, action in [("Логин для поиска…", "edit-login"), ("Riot ID для API…", "edit-riot-id"),
@@ -376,6 +384,9 @@ class Dashboard(QWidget):
         return next((a for a in self.accounts if account_key(a) == self.selected_key), None)
 
     def set_accounts(self, accounts):
+        for account in accounts:
+            for game, profile in account.get("games", {}).items():
+                account["games"][game] = normalize_collection(profile)
         self.accounts = accounts
         self._filter_accounts()
 
@@ -503,6 +514,7 @@ class Dashboard(QWidget):
         self.connect_button.setVisible(bool(account) and not has_2fa)
         self.connect_action.setEnabled(bool(account) and not has_2fa)
         self.share_action.setEnabled(has_2fa)
+        self.export_action.setEnabled(bool(account))
         key = (self.selected_key, self.game)
         self.api_button.setEnabled(bool(account) and key not in self.busy)
         self.client_button.setEnabled(bool(account) and key not in self.busy)
@@ -550,7 +562,7 @@ class Dashboard(QWidget):
     def _render_grid(self):
         query = self.inventory_search.text()
         is_character = self.collection == "characters"
-        rows = self.rows if is_character else [enrich_skin(row, self.skin_types[self.game]) for row in self.rows]
+        rows = unique_items(self.rows) if is_character else unique_items([enrich_skin(row, self.skin_types[self.game]) for row in self.rows])
         filtered = [r for r in rows if item_matches(r, query)]
         catalog_mode = self.mode.currentData() == "catalog"
         grid = self.inventory_grid
@@ -587,7 +599,7 @@ class Dashboard(QWidget):
         self.empty_collection.setText("Ничего не найдено. Измените запрос." if query else
             ("Коллекция пуста." if self.current_account and self.collection in self.current_account.get("games", {}).get(self.game, {}) and not catalog_mode
              else "Данные ещё не загружены."))
-        self.result_count.setText(f"Найдено {len(filtered)} из {len(self.rows)}" if query else f"Всего: {len(self.rows)}" if self.rows else "")
+        self.result_count.setText(f"Найдено {len(filtered)} из {len(rows)}" if query else f"Всего: {len(rows)}" if rows else "")
 
     def _show_item(self, item):
         if item is None:

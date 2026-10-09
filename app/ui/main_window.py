@@ -15,12 +15,17 @@ from PyQt6.QtWidgets import (
     QMenu,
     QApplication,
     QProgressDialog,
+    QFileDialog,
+    QLineEdit,
 )
 from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon
 
 from app.core import load_accounts, save_accounts
 from app.core.share import export_account, import_account, ShareError
+from app.core.account_archive import (write_archive, read_archive, is_duplicate, ArchiveError,
+                                       ArchivePasswordRequired, ArchivePasswordError)
+from app.ui.archive_dialog import ArchiveExportDialog
 from app.core.fcm_service import FcmService
 from app.core import updater
 from app.core import patchright_login
@@ -93,6 +98,7 @@ class MainWindow(QMainWindow):
         self.sessions = SessionManager(self, store=None if start_services else MemorySessionStore(), autostart=start_services)
         self._profile_sessions = self.sessions.sessions
         self._pending_qr = {}
+        self._pending_zip_push = set()
         self._qr_scanner = None
         QApplication.instance().aboutToQuit.connect(self._close_qr_scanner)
         self.api_keys = {"lol": os.getenv("RIOT_API_KEY", ""),
@@ -177,7 +183,8 @@ class MainWindow(QMainWindow):
         # Updater functionality is retained but no automatic upstream install is offered.
 
     def _dashboard_action(self, action):
-        handlers = {"add": self._add_via_login, "import": self._import_account,
+        handlers = {"add": self._add_via_login, "import": self._import_zip_accounts,
+                    "import-code": self._import_account, "export": self._export_zip_accounts,
                     "qr": self._scan_qr, "settings": self._data_settings,
                     "requests": self._show_requests}
         if action in handlers:
@@ -189,6 +196,8 @@ class MainWindow(QMainWindow):
         if action == "connect-2fa":
             if not account.get("seed"):
                 self._add_via_login(connect_2fa=True, target=copy.deepcopy(account))
+        elif action == "export-selected":
+            self._export_zip_accounts(selected_only=True)
         elif action == "client-launch":
             self.client_sessions.launch(account)
         elif action == "account-details":
@@ -585,6 +594,7 @@ class MainWindow(QMainWindow):
             )
 
     def _populate(self):
+        self._pending_zip_push.intersection_update(account_key(a) for a in self.accounts)
         self.sessions.sync_accounts(self.accounts)
         self._update_session_status()
         self.dashboard.set_accounts(self.accounts)
@@ -1055,6 +1065,15 @@ class MainWindow(QMainWindow):
         self._confirm_qr_signin(account, token, suuid, cluster)
 
     def _on_session_ready(self, key, state):
+        if key in self._pending_zip_push:
+            token = self.sessions.token(key)
+            account = next((a for a in self.accounts if account_key(a) == key), None)
+            if token and account:
+                self._pending_zip_push.discard(key)
+                threading.Thread(target=self._import_push_worker,
+                                 args=(copy.deepcopy(account), token, True), daemon=True).start()
+            elif state in ("login", "forgotten") or account is None:
+                self._pending_zip_push.discard(key)
         if key in self._rank_waiting_sessions:
             if self.sessions.token(key):
                 self._rank_waiting_sessions.discard(key)
@@ -1161,14 +1180,93 @@ class MainWindow(QMainWindow):
             target=self._import_push_worker, args=(account,), daemon=True
         ).start()
 
-    def _import_push_worker(self, account):
+    def _export_zip_accounts(self, selected_only=False):
+        if not self.accounts:
+            self.toast.popup("Нет аккаунтов для экспорта")
+            return
+        current = self.dashboard.current_account
+        dialog = ArchiveExportDialog(len(self.accounts), current, selected_only, self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            dialog.deleteLater()
+            return
+        accounts = [current] if dialog.scope.currentData() == "selected" else self.accounts
+        password = dialog.archive_password()
+        dialog.password.clear()
+        dialog.confirm.clear()
+        dialog.deleteLater()
+        path, _ = QFileDialog.getSaveFileName(self, "Сохранить аккаунты", "Riot-SDA-accounts.zip", "Архив ZIP (*.zip)")
+        if not path:
+            return
+        if not path.lower().endswith(".zip"):
+            path += ".zip"
+        try:
+            write_archive(path, accounts, self.sessions.sessions, password)
+        except ArchiveError as exc:
+            show_error(self, "Экспорт ZIP", str(exc))
+            return
+        self.toast.popup(f"ZIP сохранён · аккаунтов: {len(accounts)}")
+
+    def _import_zip_accounts(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Импорт аккаунтов из ZIP", "", "Архив ZIP (*.zip)")
+        if not path:
+            return
+        password = ""
+        while True:
+            try:
+                entries = read_archive(path, password)
+                break
+            except (ArchivePasswordRequired, ArchivePasswordError) as exc:
+                password, ok = QInputDialog.getText(self, "Пароль ZIP", str(exc), QLineEdit.EchoMode.Password)
+                if not ok:
+                    return
+            except ArchiveError as exc:
+                show_error(self, "Импорт ZIP", str(exc))
+                return
+        self._apply_zip_import(entries)
+
+    def _apply_zip_import(self, entries):
+        added, skipped = [], 0
+        for entry in entries:
+            account = entry["profile"]
+            if is_duplicate(account, self.accounts + [e["profile"] for e in added]):
+                skipped += 1
+            else:
+                added.append(entry)
+        if not added:
+            self.toast.popup(f"Аккаунты уже добавлены · пропущено: {skipped}")
+            return
+        original = list(self.accounts)
+        self.accounts.extend(entry["profile"] for entry in added)
+        try:
+            save_accounts(self.accounts)
+        except OSError:
+            self.accounts[:] = original
+            show_error(self, "Импорт ZIP", "Не удалось сохранить аккаунты на этом компьютере.")
+            return
+        self.dashboard.selected_key = account_key(added[0]["profile"])
+        self._populate()
+        for entry in added:
+            account, record = entry["profile"], entry["session"]
+            if record:
+                if account.get("seed"):
+                    self._pending_zip_push.add(account_key(account))
+                # Re-mint and verify the owner normally; no cached access token
+                # from an untrusted archive is installed as a ready session.
+                self.sessions.put(account, record["sso"], record.get("cookie_expires_at"))
+        if self._rank_auto_enabled:
+            self._queue_rank_refresh([entry["profile"] for entry in added])
+        self.toast.popup(f"Импортировано: {len(added)} · уже добавлено: {skipped}")
+
+    def _import_push_worker(self, account, token=None, quiet=False):
         """Re-register push with this device's FCM token so login prompts arrive
         here, not on the device the account was shared from."""
-        token = self._valid_access_token(account)
+        token = token or self._valid_access_token(account)
         note = self._register_push(token, None, account.get("puuid"))
-        self._import_result.emit({"name": account["name"], "note": note})
+        self._import_result.emit({"name": account["name"], "note": note, "quiet": quiet})
 
     def _on_import_result(self, result):
+        if result.get("quiet"):
+            return
         save_accounts(self.accounts)
         QMessageBox.information(
             self, "Imported", f"Added {result['name']}{result['note']}"

@@ -1,6 +1,8 @@
 import os
 import json
 
+from app.core.inventory import normalize_collection
+
 APPDATA_DIR = os.path.join(os.getenv("APPDATA"), "Riot2FA")
 ACCOUNTS_FILE = os.path.join(APPDATA_DIR, "accounts.json")
 FCM_CREDENTIALS_FILE = os.path.join(APPDATA_DIR, "fcm_credentials.json")
@@ -14,9 +16,14 @@ def load_accounts():
         return json.load(f)
 
 def save_accounts(accounts):
-    os.makedirs(APPDATA_DIR, exist_ok=True)
-    with open(ACCOUNTS_FILE, "w", encoding="utf-8") as f:
-        json.dump(accounts, f, indent=2, ensure_ascii=False)
+    from pathlib import Path
+    from app.core.client_switcher import atomic_write
+    for account in accounts:
+        for game, profile in account.get("games", {}).items():
+            if isinstance(profile, dict):
+                account["games"][game] = normalize_collection(profile)
+    payload = json.dumps(accounts, indent=2, ensure_ascii=False).encode("utf-8")
+    atomic_write(Path(ACCOUNTS_FILE), payload)
 
 def load_fcm_credentials():
     """One-time FCM device registration, shared across all accounts."""

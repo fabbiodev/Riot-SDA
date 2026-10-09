@@ -70,6 +70,19 @@ class DashboardTests(unittest.TestCase):
     def test_inter_variable_loaded(self):
         self.assertIn("Inter", self.app.font().family())
 
+    def test_duplicate_collection_cards_are_removed_and_counts_match(self):
+        accounts = fixture_accounts()
+        profile = accounts[0]["games"]["lol"]
+        profile["characters"].append(dict(profile["characters"][0], name=" АРИ ", skin_ids=["duplicate"]))
+        profile["skins"].append(dict(profile["skins"][0], id="duplicate", name="ДУХ ЦВЕТЕНИЯ АРИ"))
+        self.widget.set_accounts(accounts)
+        self.assertEqual(self.widget.inventory_grid.count(), 2)
+        self.assertEqual(self.widget.stat_values[2].text(), "2")
+        self.assertEqual(self.widget.stat_values[3].text(), "1")
+        self.widget.set_collection("skins")
+        self.assertEqual(self.widget.inventory_grid.count(), 1)
+        self.assertEqual(self.widget.result_count.text(), "Всего: 1")
+
     def test_typing_filters_login_and_clearing_restores_list(self):
         self.widget.account_search.setFocus()
         QTest.keyClicks(self.widget.account_search, "ALT_ACCOUNT")

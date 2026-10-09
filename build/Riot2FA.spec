@@ -41,7 +41,7 @@ hiddenimports = []
 # third-party dependency must be declared explicitly here.
 for pkg in (
     "firebase_messaging", "google.protobuf", "http_ece", "cryptography",
-    "cv2", "numpy", "requests", "patchright", "greenlet", "pyee", "psutil", "yaml",
+    "cv2", "numpy", "requests", "patchright", "greenlet", "pyee", "psutil", "yaml", "pyzipper", "Cryptodome",
 ):
     try:
         d, b, h = collect_all(pkg)
